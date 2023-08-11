@@ -9,7 +9,7 @@ This version has been modified to work with the differences found in the tracked
 
 (Not to be confused with the TV Modulator/Demodulator pack or the **"antenna connectors"** on the back of the VCR!).
 
-<img src="assets/images/DdD-EBU-Colour-Bar-PAL-VHS-SP.png" width="" height="">
+<img src="https://github.com/oyvindln/vhs-decode/wiki/assets/images/VHS-Decode-Continuous-New-2023-Consumer-Workflow-16-by-9.png" width="" height="">
 
 SMPTE ColourBars (16:9) Test Tape With [WSS](https://github.com/oyvindln/vhs-decode/wiki/Wide-Screen-Signalling) (PAL) exported full-frame (1112 x 624)
 
