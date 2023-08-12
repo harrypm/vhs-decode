@@ -9,12 +9,10 @@ This version has been modified to work with the differences found in the tracked
 
 (Not to be confused with the TV Modulator/Demodulator pack or the **"antenna connectors"** on the back of the VCR!).
 
-<img src="https://github.com/oyvindln/vhs-decode/wiki/assets/images/VHS-Decode-Continuous-New-2023-Consumer-Workflow-16-by-9.png" width="" height="">
-
-SMPTE ColourBars (16:9) Test Tape With [WSS](https://github.com/oyvindln/vhs-decode/wiki/Wide-Screen-Signalling) (PAL) exported full-frame (1112 x 624)
+<img src="https://github.com/harrypm/vhs-decode/assets/56382624/8a9d7e97-fdf6-4b68-80db-118aea1488dd" width="800" height="">
 
 
-# [Supported Tape Formats](https://github.com/oyvindln/vhs-decode/wiki/Tape-Support-List)
+# [Supported Tape Formats](https://github.com/oyvindln/vhs-decode/wiki/Tape-Format-Support-List)
 
 
 **(S-)VHS** 625-line and 525-line - NTSC, NTSC-J, PAL and PAL-M. **Fully Supported**
@@ -37,7 +35,7 @@ SMPTE ColourBars (16:9) Test Tape With [WSS](https://github.com/oyvindln/vhs-dec
 # [FAQ - Frequently Asked Questions](https://github.com/oyvindln/vhs-decode/wiki/FAQ)
 
 
-Example Videos: [VHS-Decode](https://odysee.com/@vhs-decode:7) / [The Rewinding](https://odysee.com/@therewinding:4?view=content) - Odysee
+Example Videos: [VHS-Decode](https://odysee.com/@vhs-decode:7) / [The Rewinding](https://odysee.com/@therewinding:4?view=content) - Odysee / [The Video Dump Channel](https://www.youtube.com/@videodumpchannel) - YouTube
 
 Example Workflow [Flowcharts and Overview Graphics](https://github.com/oyvindln/vhs-decode/wiki/Diagram-Visuals)
 
@@ -45,6 +43,9 @@ The frequently asked questions page and the [Wiki](https://github.com/oyvindln/v
 
 
 # [CVBS-Decode - Composite Video Decoder](https://github.com/oyvindln/vhs-decode/wiki/CVBS-Composite-Decode)
+
+
+<img src="https://github.com/harrypm/vhs-decode/assets/56382624/d9aab894-b788-4d9c-9f97-ae57ccf5b988" width="" height="">
 
 
 This repository also contains an **experimental** CVBS decoder, `cvbs-decode`, which shares code with ld-decode and vhs-decode. Capable of decoding basic raw digitized NTSC and PAL composite video, including colour if the source is somewhat stable. 
@@ -59,38 +60,34 @@ Note for test media generation AJA/Magewell/Blackmagic and even some consumer di
 # [HiFi-Decode](https://github.com/oyvindln/vhs-decode/wiki/003-Audio#hifi-decode-hifi-rf-into-audio-installation-and-usage) & [RTL-SDR Decode](https://github.com/oyvindln/vhs-decode/wiki/RTLSDR)
 
 
-Thanks to VideoMem's work on [Superheterodyne Decoding Tools](https://github.com/VideoMem/Superheterodyne-decoding-tools) we now have a working [HiFi Audio Decoder](https://github.com/oyvindln/vhs-decode/wiki/003-Audio) which provides decoding for VHS & Video8/Hi8 HiFi FM tracks which takes uncompressed or FLAC compressed RF captures of HiFi FM signals and outputs standard 24-bit 192khz FLAC or PCM (.wav) stereo files. RTLSDR decode can run in realtime (1~3 sec delay) and provide live playback 8msps RF files and a 48khz 24-bit FLAC file of the decoded audio.
+Thanks to VideoMem's work on [Superheterodyne Decoding Tools](https://github.com/VideoMem/Superheterodyne-decoding-tools) we now have a working [HiFi Audio Decoder](https://github.com/oyvindln/vhs-decode/wiki/003-Audio) which provides decoding for VHS & Video8/Hi8 HiFi FM tracks which takes uncompressed or FLAC compressed RF captures of HiFi FM signals and outputs standard 24-bit 192khz FLAC or PCM (.wav) stereo files. 
+
+[RTLSDR Decode](https://github.com/oyvindln/vhs-decode/wiki/RTLSDR) can run in realtime (1~3 sec delay) and provide live playback 8msps RF files and a 48khz 24-bit FLAC file of the decoded audio.
 
 
-# Dependencies - Hardware
+# Step 01 Aquire a working VCR or VTR 
 
+Almost any VCR or VRT will work for FM RF capture.
 
-## A Working Tape Player (VCR/VTR etc)
-
-
-Preferably adjusted per tape and in excellent mechanical and head condition, prosumer metal track decks are preferable as they were built generally better in terms of mechnical stability than cheaper later consumer decks that use more plastics, the only **crtical requirement** is avalible test points or a head amplifyer that is easy to tap into, this goes for any and all tape formats.
+Preferably within spec and in excellent mechanical and head condition, prosumer metal track decks are somewhat preferable as they were built generally better in terms of mechnical stability than cheaper later consumer decks that use more plastics, however in any and all cases only **crtical requirement** is avalible test points or a head amplifyer that is easy to tap into, this goes for any and all tape formats, if the deck can track your tape it can be used for FM RF capture 90% of the time.
 
 **Note** SVHS tapes can be RF captured on standard VHS HiFi decks.
 
 **Note** SVHS NTSC Decks - Currently inflated, but you can import PAL decks with NTSC support for 1/3rd the price though this only applys if conventional refrance SVHS captures are required.
 
-**Always clean your tape track/drum/heads** before and afterwards with 99.9% isopropanol and lint free cloths/pads/paper. This ensures less dropouts from dirty heads or tracks including the track of the head drum.
+**Always clean your tape track/drum/heads** before and afterwards with 99.9% isopropanol and lint free cloths/pads/paper. This ensures less dropouts from dirty heads or tracks including the track of the head drum but its alway good practice to avoid cross contamination of tapes.
 
-Its good practice to avoid cross contamination of tapes, especially if dealing with mouldy or contaminated tapes.  
-
-It also helps to make sure to re-lubricate metal and plastic moving joints cogs and bearings with appropriate greases and oils to avoid mechanical failures. Please read the [Cleaning & Servicing Guide](https://github.com/oyvindln/vhs-decode/wiki/Cleaning-&-Servicing-Guide)
+We have a [Cleaning & Servicing Guide](https://github.com/oyvindln/vhs-decode/wiki/Cleaning-&-Servicing-Guide) a poorly mantained VCR is always going to perform poorly do not run valuable tapes though VCRs that have not been inspected.
 
 
-## An RF Capture Device
+# Step 2: Aquire an RF Capture Device
 
 
-Currently standardised is 2 methods but RF capture is not limited to these methods.
+Currently standardised is 3 devices [**but RF capture is not limited to these devices only**]().
 
 <img src="https://github.com/oyvindln/vhs-decode/wiki/assets/images/Hardware/DdD-Rev3-CX-White-Sony-ILCE-7RM3-2022.12.20-21.54.48.png" width="600" height="">
 
-
-## [Domesday Duplicator (DdD)](https://github.com/harrypm/DomesdayDuplicator#readme) (Method 01 - 300-350USD*)
-
+## [Domesday Duplicator (DdD)](https://github.com/harrypm/DomesdayDuplicator#readme) (300-350USD*)
 
 Capture is done using an simple GUI application.
 
@@ -106,9 +103,7 @@ Originally geared towards capturing RF from Laserdisc players, it does however a
 
 [How To Aquire?](https://docs.google.com/document/d/1liOpdM6z51AwM5jGLoUak6h9aJ0eY0fQduE5k4TcleU/edit?usp=sharing) / [How to Fabricate & Flash?](https://docs.google.com/document/d/1k2bPPwHPoG7xXpS1NCYEe3w_jD_ts0yRCp-2aQ6QoKY/edit?usp=sharing) / [More Information](https://www.domesday86.com/?page_id=978)
 
-
-## [CX Card & CXADC](https://github.com/oyvindln/vhs-decode/wiki/CX-Cards) (Method 02 - 20-35USD)
-
+## [CX Card & CXADC](https://github.com/oyvindln/vhs-decode/wiki/CX-Cards) (20-35USD)
 
 Capture & Config uses simple command-line arguments and parameters [CXADC](https://github.com/happycube/cxadc-linux3)
 
@@ -125,63 +120,15 @@ Currently the CX23883-39 based white variant cards have been consistently lower 
 
 # Deployment of Capture Hardware
 
-
 Please read [VCR Reports](https://github.com/oyvindln/vhs-decode/wiki/VCR-reports) / [The Tap List](https://github.com/oyvindln/vhs-decode/wiki/004-The-Tap-List) / [Hardware Installation Guide](https://github.com/oyvindln/vhs-decode/wiki/Hardware-Installation-Guide)
 
 Information on various VCRs that have been documented alongside high resolution pictures of VCR's that have had RF taps installed, guidance on recommended cables/connectors & tools to use are also included.
 
-The setup process for RF capture involves running a short cable internally from points that provide the unprocessed video and or audio signal to a BNC jack at back of a metal/plastic VCR chassis or threaded out a vent, this allows direct access to the FM RF signals conveniently & reliably, we call this a Tap Point or RF Tap, for some decks and camcorders however Dupont conectors and ribbon jigs can be used.
+The setup process for RF capture involves running a short cable internally from test point or amplifyer points that provide the unprocessed video/hifi signals to a BNC jack at back of a metal/plastic VCR chassis or threaded out a vent, this allows direct access to the FM RF signals conveniently & reliably, we call this a Tap Point or RF Tap, for some decks and camcorders however Dupont conectors and ribbon jigs can be used on Video8 & Hi8.
 
-VCR ==> Head Drum ==> Amplification & Tracking ==> FM RF Test/Signal Points ==> FM RF Capture ==> Software Decoding ==> Lossless TBC Files ==> Audio/Video File Creation.
+`VCR ==> Head Drum ==> Amplification & Tracking ==> FM RF Test/Signal Points ==> FM RF Capture ==> Software Decoding & Dropout Detection ==> Lossless TBC Files ==> Dropout Correction ==> Standard Audio/Video File Creation.`
 
-### Finding Test Points - There Names
-
-**Video FM RF Signal:**
-
-`RF C`, `RF Y`, `RF Y+C`, `V RF`, `PB`, `PB.FM`, `V ENV`, `ENV`, `ENVE`, `ENVELOPE`, `VIDEO ENVE`, `VIDEO ENVELOPE`
-
-**HiFi Audio FM Signal:**
-
-`HiFi`, `A.PB`, `A FM`, `A.PB.FM`, `Audio FM`, `A-Out`, `A ENV`, `HIFI Envelope`, `FM Mix Out`
-
-
-## Parts for RF Tap
-
-
-[What tools do I need?](https://github.com/oyvindln/vhs-decode/wiki/Hardware-Installation-Guide)
-
-* 50ohm BNC connectors, normally a [premade bulkhead](https://www.aliexpress.com/item/4000981154513.html), or [solderable thread mounted](https://www.aliexpress.com/item/4000639816847.html).
-* 50-100cm of [RG316](https://www.aliexpress.com/item/32726071013.html) or [RG178](https://www.aliexpress.com/item/32879341402.html) 50 ohm coaxial cable.
-* 10uf Capacitors [standard assorment](https://www.aliexpress.com/item/1005003276169319.html?) or audio grade like Nichicon if you like.
-
-Connection Cables
-
-* [Direct BNC to BNC](https://www.aliexpress.com/item/32530974771.html?) 
-* [50Ohm BNC to BNC Cable](https://www.aliexpress.com/item/1005004558208116.html?)
-* [S-Video to BNC](https://www.aliexpress.com/item/1005003333398231.html)
-
-On CX White Cards you use the S-Video Luma pin for the RF input, but a BNC can be easily added.
-
-
-## Install A RF Tap
-
-
-If you want to still use live playback or are using lower signal decks adding an 10uf (3.3uf to 100uf range works fine as well) capacitor to the test point or amplifier can stop dropouts and improve signal level, avoiding dropouts.
-
-Center is Signal, Outer is Ground, this goes for jacks and for coaxial cable.
-
-The Negative leg (shorter) goes on test/signal point, Positive leg (longer) on cable to connector/probe
-
-While type and voltage does not matter much its best to use new/tested capacitors.
-## Notes:
-
-**Note** We use Aliexpress links for wide availability globally, but local venders are a thing.
-
-**Note** With some Sony decks you can use Dupont connectors on the test point pins making an easy RF tap.
-
-**Note**  Do not make sharp bends in any RF cabling, keep total cable runs as short as possible Ideally 30-60cm, more cable = more signal loss.
-
-**Note** Some UMATIC decks have an RF output on the back, however this only provides Luma RF for dropout detection and not the full signal required for RF capture.
+<img src="https://github.com/harrypm/vhs-decode/assets/56382624/d98c031d-d927-4554-abe1-eb0611108ad9" width="" height="">
 
 
 # Windows Builds
@@ -189,7 +136,9 @@ While type and voltage does not matter much its best to use new/tested capacitor
 
 [Windows Setup & Downloads](https://github.com/oyvindln/vhs-decode/wiki/Windows-Build)
 
-The ld-tools suit alongside a combined exe version of `ld-decode` / `vhs-decode` / `cvbs-decode` has been ported to windows. This allows the use of ld-analyse to view TBC files and ld-lds-converter to convert and compress DdD captures inside Windows with drag and drop bat scripts. 
+The ld-tools suit alongside a combined exe version of `ld-decode` / `vhs-decode` / `cvbs-decode` has been ported to windows. 
+
+This allows the use of ld-analyse to view TBC files and ld-lds-converter to convert and compress DdD captures inside Windows with drag and drop bat scripts video exporting also has an export script, hifi decoding is currently only avalible via WSL2 or via RTLSDR decode via GNURadio.
 
 
 # MacOS Builds
@@ -293,52 +242,6 @@ Use `cd vhs-decode` to enter into the directory to run commands, `cd..` to go ba
 Use <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop the current process.
 
 You dont actaully type `<` and `>` on your input & output files.
-
-
-## Basic CX Card Setup & RF Capture
-
-
-[CXADC Readme](https://github.com/happycube/cxadc-linux3#readme) for information on how to install & configure the driver, this also goes into depth on modes.
-
-[Commands for real-time FLAC capture on CX Cards](https://github.com/happycube/cxadc-linux3/wiki/FLAC-Compression-Guide)
-
-[Naming Guide For RF Captures!](https://github.com/oyvindln/vhs-decode/wiki/Capture-Naming-Guide)
-
-* Install CX Card & Install CXADC driver
-* Find Input
-* Check Gain
-* Capture
-
-To see if you have a connection, use the live preview mode and then hook up your RF cable, normally you will see a white flash as a signal, if not change your vmux or input within a 0-2 range with the below command.
-
-    sudo echo 0 >/sys/class/cxadc/cxadc0/device/parameters/vmux
-
-To see a live preview of tape signal being received by a CXADC card, note that the video head tracked signal will be unstable or wobbly if settings are not the same; you may only see "signal flash" if in 16-bit mode for example.
-
-This is quite useful if you don't own a CRT with Horizontal/Vertical shifting, as it will allow you to inspect the full area for alignment and/or tracking issues.
-
-PAL framing for the default 28.64 MHz/8-bit mode:
-
-    ffplay -hide_banner -async 1 -f rawvideo -pix_fmt gray8 -video_size 1832x625 -i /dev/cxadc0 -vf scale=1135x625,eq=gamma=0.5:contrast=1.5
-
-NTSC framing for 28.64 MHz/8-bit mode:
-
-    ffplay -hide_banner -async 1 -f rawvideo -pix_fmt gray8 -video_size 1820x525 -i /dev/cxadc0 -vf scale=910x525,eq=gamma=0.5:contrast=1.5
-
-Capture 30 seconds of tape signal using CXADC driver 8-bit samples
-
-    timeout 30s cat /dev/cxadc0 > <capture>_CXADC.u8
-
-For 16-bit, simply change the output filename extension to `.u16`
-
-For FLAC captures, set the output filename extension to your desired tape format, for example `.VHS`
-
-It is recommended to use a fast storage device with 40-100 MB/s or faster write capacity, in order to avoid dropped samples, ideally an dedicated SSD (via M.2 or SATA connector, not USB) formatted with the exFAT filesystem.
-
-## What should a FM video signal look like on the preview?
-
-
-<img src="https://github.com/oyvindln/vhs-decode/wiki/assets/images/Signal-Examples/Video-FM-2023-02-04-14-08-13.png" width="600" height="">
 
 
 ## Decoding RF Captures
