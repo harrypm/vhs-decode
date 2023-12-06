@@ -31,7 +31,7 @@ This repository also contains an **experimental** CVBS decoder, `cvbs-decode`, w
 
 # HiFi-Decode & RTLSDR-Decode
 
-Thanks to VideoMem's work on [Superheterodyne Decoding Tools](https://github.com/VideoMem/Superheterodyne-decoding-tools) we now have a working [HiFi Audio Decoder](https://github.com/oyvindln/vhs-decode/wiki/003-Audio) which provides decoding for (S)VHS, Betamax, Video8 & Hi8 HiFi FM tracks.
+Thanks to VideoMem's work on [Superheterodyne Decoding Tools](https://github.com/VideoMem/Superheterodyne-decoding-tools) we now have a working [HiFi Audio Decoder](https://github.com/oyvindln/vhs-decode/wiki/hifi-decode) which provides decoding for (S)VHS, Betamax, Video8 & Hi8 HiFi FM tracks.
 
 - 24-bit 192khz FLAC stereo files. 
 - Software Noise Reduction 
@@ -45,18 +45,18 @@ Thanks to VideoMem's work on [Superheterodyne Decoding Tools](https://github.com
 ## Tape:
 
 
-| Format                 | Format Type         | Line  System  | TV System                    | Level of Decoding Support     | RF Capture Support | HiFi Decoding Support |
-|------------------------|---------------------|---------------|------------------------------|-------------------------------|--------------------|-----------------------|
-| (S)VHS                 | Colour-Under        | 525 & 625     | NTSC, NTSC-J, PAL, PAL-M     | High                          | Yes, Standerdised  | High                  | 
-| Betamax                | Colour-Under        | 525 & 625     | NTSC, PAL                    | Medium                        | Yes, Standerdised  | Medium                | 
-| U-Matic Low Band       | Colour-Under        | 525 & 625     | NTSC, PAL                    | High                          | Yes, Standerdised  | N/A - Linear Audio    |
-| U-Matic (SP) High Band | Colour-Under        | 525 & 625     | PAL                          | High                          | Yes, Standerdised  | N/A - Linear Audio    |
-| Video8 & Hi8           | Colour-Under        | 525 & 625     | NTSC, PAL                    | Medium (Chroma needs work)    | Yes, Standerdised  | Medium                |
-| Philips VCR            | Colour-Under        | 525 & 625     | NTSC, PAL                    | Medium                        | Yes, Standerdised  | N/A - Linear Audio    |
-| EIAJ                   | Colour-Under        | 405, 525, 625 | PAL (NTSC Samples Needed)    | Medium                        | Yes, Standerdised  | N/A - Linear Audio    |
-| SMPTE-C 1" Type C      | Modulated Composite | 525 & 625     | NTSC, PAL                    | Medium (More Samples Needed)  | Yes, Standerdised  | N/A - Linear Audio    | 
-| SMPTE-B 1" Type B      | Modulated Composite | 525 & 625     | NTSC, PAL                    | Work In Progress              | Yes, Standerdised  | N/A - Linear Audio    | 
-| 2" Quadduplex          | Modulated Composite | 525, 625, 655 | NTSC, PAL                    | Samples Required              | Work In Progress   | N/A - Linear Audio    |
+| Format                 | Format Type         | Line  System  | TV System                         | Level of Decoding Support     | RF Capture Support | HiFi Decoding Support |
+|------------------------|---------------------|---------------|-----------------------------------|-------------------------------|--------------------|-----------------------|
+| (S)VHS                 | Colour-Under        | 525 & 625     | NTSC, NTSC-J, PAL, PAL-M, MESECAM | High                          | Yes, Standerdised  | High                  | 
+| Betamax                | Colour-Under        | 525 & 625     | NTSC, PAL                         | Medium                        | Yes, Standerdised  | Medium                | 
+| U-Matic Low Band       | Colour-Under        | 525 & 625     | NTSC, PAL                         | High                          | Yes, Standerdised  | N/A - Linear Audio    |
+| U-Matic (SP) High Band | Colour-Under        | 525 & 625     | PAL                               | High                          | Yes, Standerdised  | N/A - Linear Audio    |
+| Video8 & Hi8           | Colour-Under        | 525 & 625     | NTSC, PAL                         | Medium (Chroma needs work)    | Yes, Standerdised  | Medium                |
+| Philips VCR            | Colour-Under        | 525 & 625     | NTSC, PAL                         | Medium                        | Yes, Standerdised  | N/A - Linear Audio    |
+| EIAJ                   | Colour-Under        | 405, 525, 625 | PAL (NTSC Samples Needed)         | Medium                        | Yes, Standerdised  | N/A - Linear Audio    |
+| SMPTE-C 1" Type C      | Modulated Composite | 525 & 625     | NTSC, PAL                         | Medium (More Samples Needed)  | Yes, Standerdised  | N/A - Linear Audio    | 
+| SMPTE-B 1" Type B      | Modulated Composite | 525 & 625     | NTSC, PAL                         | Work In Progress              | Yes, Standerdised  | N/A - Linear Audio    | 
+| 2" Quadduplex          | Modulated Composite | 525, 625, 655 | NTSC, PAL                         | Samples Required              | Work In Progress   | N/A - Linear Audio    |
 
 
 
@@ -77,8 +77,9 @@ Thanks to VideoMem's work on [Superheterodyne Decoding Tools](https://github.com
 |---------------|------------|--------------|-----------|--------------|--------------------|------------------------|
 | CVBS          | 525 Lines  | Interlaced   | 525 NTSC  | 4:3 / 16:9   | Yes*               | Yes*                   |
 | CVBS          | 625 Lines  | Interlaced   | 625 PAL   | 4:3 / 16:9   | Yes*               | Yes*                   |
-| CVBS          | 405 Lines  | Interlaced   | 405 PAL   | 4:3          | Yes*               | Not Tested/Implimented |
-| CVBS          | 819 Lines  | Interlaced   | 405 PAL   | 4:3          | Yes*               | Not Tested/Implimented |
+| CVBS          | 655 Lines  | Interlaced   | PAL       | 4:3          | Yes*               | Not Tested/Implimented |
+| CVBS          | 405 Lines  | Interlaced   | PAL       | 4:3          | Yes*               | Not Tested/Implimented |
+| CVBS          | 819 Lines  | Interlaced   | PAL       | 4:3          | Yes*               | Not Tested/Implimented |
 | CVBS 240p     | 240 Lines  | Progressive  | NTSC      | 4:3 / 16:9   | Yes*               | Work in Progress       |
 | CVBS 288p     | 288 Lines  | Progressive  | PAL       | 4:3 / 16:9   | Yes*               | Work in Progress       |
 | 960h CCTV     | 960 x 576  | Interlaced   | N/A       | 16:9 Only    | Yes*               | Not Tested             |
@@ -102,9 +103,11 @@ Other dependencies include Python 3.8+, numpy, scipy, cython, numba, pandas, Qt5
 
 [Windows Setup & Downloads](https://github.com/oyvindln/vhs-decode/wiki/Windows-Build)
 
-The ld-tools suit alongside a combined exe version of `ld-decode` / `vhs-decode` / `cvbs-decode` / `hifi-decode` inside a single `decode.exe` has been ported to windows. 
+The ld-tools suit alongside a combined exe version of `ld-decode` / `vhs-decode` / `cvbs-decode` / `hifi-decode` inside a single exe has been ported to windows. 
 
-This allows the use of ld-analyse to view TBC files and ld-lds-converter to convert and compress DdD captures inside Windows with drag and drop bat scripts video exporting also has an export script, hifi decoding is currently only avalible via WSL2 or via RTLSDR decode via GNURadio.
+`decode.exe` with `vhs`, `ld`, `cvbs`, `hifi` at the start i.g `decode.exe vhs` calls the decoder you desire, commands are universal.
+
+This allows the use of ld-analyse to view TBC files and ld-lds-converter to convert and compress DdD captures inside Windows with drag and drop bat scripts video exporting also has an export script, hifi decoding is currently only avalible via WSL2 or via RTLSDR decode using [GNURadio](https://github.com/ryanvolz/radioconda/releases).
 
 [Windows Sub-System For Linux - WSL2 Setup](https://github.com/oyvindln/vhs-decode/wiki/WSL2-Setup)
 
@@ -121,14 +124,14 @@ Due to developers not having a range of apple systems, this is entirely tested b
 
 ## Linux
 
+This requires building the suite manually, however ld-tools the tools that handle TBC files are now self contained and can be found in [releases](https://github.com/oyvindln/vhs-decode/releases/).
+
+## Ubuntu & Debian Installation
 
 [Linux compatability doc](https://docs.google.com/document/d/132ycIMMNvdKvrNZSzbckXVEPQVLTnH_YX0Oh3lqtkkQ/edit) for various tested distributions of Linux.
 
 
-
-Installation on Linux (Ubuntu/Debian-based)
-
-Install all dependencies required by LD-Decode & VHS-Decode:
+## Install all dependencies required
 
     sudo apt install clang python3-setuptools python3-numpy python3-scipy python3-matplotlib git qt5-default libqwt-qt5-dev libfftw3-dev python3-tk python3-numba libavformat-dev libavcodec-dev libavutil-dev ffmpeg openssl pv python3-distutils make cython3 cmake pipx
 
@@ -147,10 +150,10 @@ Optional dependencies for GPU (Nvidia Cards) FLAC compression support:
     sudo apt install make ocl-icd-opencl-dev mono-runtime
 
 
-## Build VHS-Decode & LD-Tools Suite
+## Build decoders & ld-tools suite
 
 
-The vhs-decode respository also has hifi-decode, cvbs-decode, ld-decode included.
+The vhs-decode respository also has cvbs-decode, ld-decode, hifi-decode included all are installed together.
 
 Download VHS-Decode:
 
@@ -249,29 +252,10 @@ The setup process for RF capture involves running a short cable internally from 
 <img src="https://github.com/harrypm/vhs-decode/assets/56382624/d98c031d-d927-4554-abe1-eb0611108ad9" width="" height="">
 
 
-
-
-# Dependencies & Installation - Software
-
-
-VHS-Decode, as with LD-Decode, has been developed and tested on machines running the latest versions of Ubuntu and Linux Mint.
-Other distributions might have outdated (or even newer) versions of certain Python libraries or other dependencies, breaking compatibility.
-
-There is a [Linux compatability doc](https://docs.google.com/document/d/132ycIMMNvdKvrNZSzbckXVEPQVLTnH_YX0Oh3lqtkkQ/edit) for various tested distributions of Linux.
-
-Its fully working on WSL2 Ubuntu 20.04 (Windows Subsystem for Linux) however issues with larger captures i.g 180gb+ may require expanding the default [virtual disk size](https://docs.microsoft.com/en-us/windows/wsl/vhd-size)
-
-Other dependencies include Python 3.5+, numpy, scipy, cython, numba, pandas, Qt5, Cmake, and FFmpeg.
-
-Some useful free tools to note for post processing are
-[StaxRip](https://github.com/staxrip/staxrip) & [Lossless Cut](https://github.com/mifi/lossless-cut) & of course [DaVinci Resolve](https://www.blackmagicdesign.com/uk/products/davinciresolve) - these give you basic editing to quickly handle uncompressed files across operating systems, and for Windows users an easy FFmpeg/AviSynth/Vapoursynth encoding and QTGMC de-interlacing experience, and full colour grading and post production ability.
-
-
-
-
-
 # Usage
 
+
+The decode family are a CLI or Commandline based tool set. 
 
 Note with WSL2 & Ubuntu, `./` in front of applications and scripts may be needed to run them.
 
@@ -285,19 +269,25 @@ You dont actaully type `<` and `>` on your input & output files.
 ## Decoding RF Captures
 
 
+Decoding produces timebase corrected 16-bit `GREY16` headerless files separated into chroma/luma or `S-Video` for colour under formats vhs, beta, umatic etc
+
+Decoding produces a single `CVBS` for composite modulated formats like SMPTE-C, SMPTE-B, LaserDisc etc.
+
+The formatting is `filename.tbc` & `filename_chroma.tbc` respectively alongside `.json` and `.log` files with frame and decode information, usable with the LD-Decode family of tools ld-analyse, ld-process-vbi, ld-process-vits, ld-dropout-correct & ld-chroma-decoder etc 
+
 Decode your captured tape to a .tbc by using:
 
     vhs-decode [arguments] <capture file> <output name>
 
 Basic Usage Example:
 
-    ./vhs-decode --debug --pal --threads 8 --tape_format VHS --cxadc CX-White-2022.10.25.u8 my-first-decode-2022.10.25
+    ./vhs-decode --debug --tape_format VHS --pal --threads 8 --cxadc CX-White-2022.10.25.u8 my-first-decode-2022.10.25
 
 After decoding process your tapes VBI data with:
 
     ld-process-vbi <decoded tape name>.tbc
 
-Use analyse tool to inspect decoded tape data:
+Use analyse GUI tool to inspect decoded tape data:
 
     ld-analyse <decoded tape name>.tbc
 
@@ -340,59 +330,75 @@ Decompress FLAC compressed captures:
 
 ## Generating Colour Video Files (.TBC to Playable .MKV)
 
-Some useful free tools to note for post processing are [StaxRip](https://github.com/staxrip/staxrip) & [Lossless Cut](https://github.com/mifi/lossless-cut) & of course [DaVinci Resolve](https://www.blackmagicdesign.com/uk/products/davinciresolve) 
-
-These tools give you editing to quickly handle uncompressed files across operating systems, and for Windows users an easy FFmpeg/AviSynth/Vapoursynth encoding and QTGMC de-interlacing experience, and full colour grading and post production ability.
-
 ### [Read the full exporting guide here](https://github.com/oyvindln/vhs-decode/wiki/Video-Exporting-&-Gen-Chroma-Scripts)
 
-<img src="https://github.com/oyvindln/vhs-decode/wiki/assets/images/Post-Processing/TV-PC-Levels.png" width="600" height="">
 
+Linux & MacOS (Universal Python)
 
-VHS-Decode produces two timebase corrected 16-bit `GREY16` headerless files separated into chroma/luma composite video signals in the `.tbc` format `filename.tbc` & `filename_chroma.tbc` respectively alongside `.json` and `.log` files with frame and decode information, usable with the LD-Decode family of tools ld-analyse, ld-process-vbi, ld-process-vits, ld-dropout-correct & ld-chroma-decoder etc 
+    python3 tbc-video-export.py Input-TBC-Name
 
-The gen chroma scrips will use decoded .tbc files and generate standard video files - by default a lossless, interlaced top field first and high-bitrate (roughly 70-100 Mb/s) FFV1 codec video which, which although ideal for archival and further processing has only recently started to gain support in modern [NLEs](https://en.wikipedia.org/wiki/Non-linear_editing).
+Windows 
 
-*gen_chroma_vid.sh automatically detects PAL/NTSC based on the .JSON, although legacy scripts still exist*
+    tbc-video-export.exe Input-TBC-Name
 
-To generate .mkv files viewable in most media players, simply use the `gen_chroma_vid.sh` script below.
-
-### Export your TBC files to a video file with the following basic command
-
+Linux/Legacy Script 
 
     ./gen_chroma_vid.sh Input-TBC-Name
 
 
-## Editing & Basic Online Usage
+Some useful free tools to note for post processing are [Hybrid](https://web.archive.org/web/20230601152934/https://www.selur.de/downloads), [StaxRip](https://github.com/staxrip/staxrip) for de-interlacing and processing and [Lossless Cut](https://github.com/mifi/lossless-cut) & [DaVinci Resolve](https://www.blackmagicdesign.com/uk/products/davinciresolve) for editing.
+
+These tools give you editing to quickly handle uncompressed files across operating systems, and somewhat easy FFmpeg/AviSynth/Vapoursynth encoding and QTGMC de-interlacing experience, and full colour grading and post production ability.
 
 
-For editing due to lack of support of FFV1 and sharing online without [de-interlacing](https://github.com/oyvindln/vhs-decode/wiki/Deinterlacing) is not supported properly at all, as such the two commands are provided below to make suitable starting files for this use.
+<img src="https://github.com/oyvindln/vhs-decode/wiki/assets/images/Post-Processing/TV-PC-Levels.png" width="600" height="">
 
-Both commands will automatically use the last file generated as the input.
 
-For editors this transcodes an FFV1/V210 output to a "*near compliant*" interlaced ProRes HQ file:
-    
-    ffmpeg -hide_banner -i "$1.mkv" -vf setfield=tff -flags +ilme+ildct -c:v prores -profile:v 3 -vendor apl0 -bits_per_mb 8000 -quant_mat hq -mbs_per_slice 8 -pixel_format yuv422p10lep -color_range tv -color_primaries bt709 -color_trc bt709 -colorspace bt709 -c:a s24le -vf setdar=4/3,setfield=tff "$1_ProResHQ.mov"
-    
-For basic online sharing you can use this command to convert the FFV1 output to a de-interlaced lossy upscaled MP4:
-    
-    ffmpeg -hide_banner -i "$1.mkv" -vf scale=in_color_matrix=bt601:out_color_matrix=bt709:1440x1080,bwdif=1:0:0 -c:v libx264 -preset veryslow -b:v 15M -maxrate 15M -bufsize 8M -pixel_format yuv420p -color_primaries bt709 -color_trc bt709 -colorspace bt709 -aspect 4:3 -c:a libopus -b:a 192k -strict -2 -movflags +faststart -y "$1_1440x1080_lossy.mp4"
+The gen chroma scrips will use decoded .tbc files and generate standard video files - by default a lossless, interlaced top field first and high-bitrate (roughly 70-100 Mb/s) FFV1 codec video which, which although ideal for archival and further processing has only recently started to gain support in modern [NLEs](https://en.wikipedia.org/wiki/Non-linear_editing).
 
-To just export the video with standard settings and the same input file name, the .tbc extention is not required.
+
+
+## Profile Options 
+
+
+For archival to web use we have a wide range of pre-made FFmpeg profiles defined inside the `tbc-video-export.json` file.
+
+Note for Odysee uploads the provided web files are ideal, for Vimeo de-interlace the FFV1 export, but for YouTube de-interlace and upscale to 5760x4320p to have base possible re-encoding from there side as SD/HD media is overcompressed on YouTube.
+
+The stock profiles for web use the BDWIF deinterlacer, but QTGMC is always recommended, [de-interlacing guide](https://github.com/oyvindln/vhs-decode/wiki/Deinterlacing).
+
+ProRes 4444XQ & FFV1 with PCM audio have been added for editing support.
+
+Define your profile with for example: `--ffmpeg-profile ffv1_pcm` which is ideal for editing in Resolve.
+
+| Profile Name  | Codec         | Compression Type     | Bit-Depth | Chroma Sub-Sampling | Audio Format | Container | File Extension | Bitrate    |
+|---------------|---------------|----------------------|-----------|---------------------|--------------|-----------|----------------|------------|
+| ffv1          | FFV1          | Lossless Compressed  | 10-bit    | 4:2:2               | FLAC Audio   | Matroska  | .mkv           | 70-100mbps |
+| ffv1_8bit     | FFV1          | Lossless Compressed  | 8-bit     | 4:2:2               | FLAC Audio   | Matroska  | .mkv           | 40-60mbps  |
+| ffv1_pcm      | FFV1          | Lossless Compressed  | 10-bit    | 4:2:2               | PCM Audio    | Matroska  | .mkv           | 70-100mbps |
+| ffv1_8bit_pcm | FFV1          | Lossless Compressed  | 8-bit     | 4:2:2               | PCM Audio    | Matroska  | .mkv           | 40-60mbps  |
+| prores_hq_422 | ProRes HQ     | Compressed           | 10-bit    | 4:2:2               | PCM Audio    | QuickTime | .mov           | 55-70mbps  |
+| prores_4444xq | ProRes 4444XQ | Compressed           | 10-bit    | 4:4:4               | PCM Audio    | QuickTime | .mov           | 80-110mbps |
+| v210          | V210          | Uncompressed         | 10-bit    | 4:2:2               | PCM Audio    | QuickTime | .mov           | 200mbps    |
+| v410          | V410          | Uncompressed         | 10-bit    | 4:4:4               | PCM Audio    | QuickTime | .mov           | 400mbps    |
+| x264_web      | AVC/H.264     | Lossy                | 8-bit     | 4:2:0               | AAC Audio    | QuickTime | .mov           | 8mbps      |
+| x265_web      | HEVC/H.265    | Lossy                | 8-bit     | 4:2:0               | AAC Audio    | QuickTime | .mov           | 8mbps      |
+
 
 ## Time Control & Audio Muxing
 
+
 Command Examples:
 
-    ./gen_chroma_vid.sh -v -s <skip number of frames> -l <number of frames long> -i <.tbc filename without .tbc extension>
+    python3 tbc-video-export.py -v -s <skip number of frames> -l <number of frames long> -i <.tbc filename without .tbc extension>
 
 The `-a` option can embed an audio file, such as audio decoded via [HiFi Decode](https://github.com/VideoMem/ld-decode/tree/hifi-decode)
 
-    ./gen_chroma_vid.sh -v -s <skip n frames> -l <n frames long> -a <capture>.flac -i <.tbc filename without .tbc extension>
+    python3 tbc-video-export.py -v -s <skip n frames> -l <n frames long> -a <capture>.flac -i <.tbc filename without .tbc extension>
 
 So for example open terminal in the directory of target TBC/Metadata files and run
 
-    ./gen_chroma_vid.sh -v -s <skip n frames> -l <number of frames long> -a <capture>.flac -i <.tbc filename without .tbc extension>
+    python3 tbc-video-export.py -v -s <skip n frames> -l <number of frames long> -a <capture>.flac -i <.tbc filename without .tbc extension>
 
 
 ## VBI (Vertical Blanking Interval) Data Recovery
@@ -410,17 +416,13 @@ Software decoding provides the full signal frame, recovery software can be used 
 
 [Ruxpin TV Teddy](https://github.com/oyvindln/vhs-decode/blob/vhs_decode/tools/ruxpin-decode/readme.pdf) (Extra audio in visable frame)
 
+
 ### Generate an video output with the top VBI area:
 
+
+    python3 tbc-video-export.py --vbi 
+
 <img src="https://github.com/oyvindln/vhs-decode/wiki/assets/images/Post-Processing/Jennings-With-VBI.png" width="600" height="">
-
-PAL
-
-    ./gen_chroma_vid.sh --ffll 2 --lfll 308 --ffrl 2 --lfrl 620 <tbc-name>
-
-NTSC
-
-    ./gen_chroma_vid.sh --ffll 1 --lfll 259 --ffrl 2 --lfrl 525 <tbc-name>
 
 
 ## Terminal Arguments
@@ -432,6 +434,7 @@ The list below is a short list for common/daily usage but does not cover all the
 
 
 ## Sample Rate Comamnds
+
 
 By default, this is set to 40 MHz (the sample rate used internally and by the Domesday Duplicator) at 16 bits.
 
@@ -527,7 +530,7 @@ Unlike CVBS-Decode & LD-Decode, VHS-Decode does not output its timebase-correcte
 
 Both the luminance and chrominance channels are separate data files, essentially a digital "S-Video", additionally useful for troubleshooting. Descriptor/log files are generated so you end up with 4 files with the following naming:
 
-`filename.tbc`        - Luminance (Y) Image Data (Combined file CVBS)
+`filename.tbc`        - Luminance (Y) Image Data (Combined Y/C for CVBS)
 
 `filename_chroma.tbc` - Chrominance (C) Image Data (QAM Modulated)
 
@@ -557,4 +560,4 @@ Both the luminance and chrominance channels are separate data files, essentially
 
 ## *If in doubt - feel free to read the docs/wiki again, if its not there then ask!*
 
-For future documentation changes & sample submissions, speak with [Harry Munday](https://github.com/harrypm) (harry@opcomedia.com) or on Discord (therealharrypm)
+For future documentation changes, speak with [Harry Munday](https://github.com/harrypm) (harry@opcomedia.com) or on Discord (therealharrypm)
