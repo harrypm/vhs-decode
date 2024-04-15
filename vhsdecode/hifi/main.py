@@ -126,7 +126,7 @@ parser.add_argument(
 
 parser.add_argument(
     "--8mm",
-    dest="8mm",
+    dest="H8",
     action="store_true",
     default=False,
     help="Sony Video8/Hi8, 8mm tape formats",
@@ -772,13 +772,13 @@ def main() -> int:
 
     print("Initializing ...")
 
-    real_mode = "s" if not args.8mm else "mpx"
+    real_mode = "s" if not args.h8 else "mpx"
     real_mode = args.mode if args.mode in ["l", "r", "sum"] else real_mode
 
     decode_options = {
         "input_rate": sample_freq * 1e6,
         "standard": "p" if system == "PAL" else "n",
-        "format": "vhs" if not args.8mm else "8mm",
+        "format": "vhs" if not args.h8 else "h8",
         "preview": args.preview,
         "preview_available": SOUNDDEVICE_AVAILABLE,
         "original": args.original,
