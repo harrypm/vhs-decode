@@ -5,7 +5,6 @@ from scipy.fftpack import fft, fftfreq
 from numpy.fft import rfft, rfftfreq
 import lddecode.core as ldd
 from scipy.signal import argrelextrema
-from vhsdecode.linear_filter import FiltersClass
 from vhsdecode.rust_utils import sosfiltfilt_rust
 
 twopi = 2 * np.pi

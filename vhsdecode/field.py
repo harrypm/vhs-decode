@@ -1278,6 +1278,10 @@ class FieldShared:
         if "hsync" in self.rf.options.ire0_adjust:
             self.rf.DecoderParams["hz_ire"] = (blanking_level - sync_tip_level) / -self.rf.DecoderParams["vsync_ire"]
 
+        # exposed here for unit tests
+        self.sync_tip_level = sync_tip_level
+        self.blanking_level = blanking_level
+
         return [Pulse(*p) for p in pulses]
 
     @staticmethod
