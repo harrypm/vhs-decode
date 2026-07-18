@@ -1850,26 +1850,28 @@ def process_chroma(
 
     field.rf.field_averages.chroma_level.push(mean_rms)
 
-    uphet = chroma_phase_focus(
+    uphet = chroma_transient_improvement(
         uphet,
         lineoffset * outwidth,
         outwidth,
         field.rf.chroma_afc.color_under,
         field.rf.chroma_afc.fsc_mhz * 1e6,
+        field.rf.options.cti_amount,
+        field.rf.options.cti_slope
     )
 
     return uphet
 
-@njit
-def chroma_phase_focus(
-    chroma_data: np.ndarray, 
+@njit(cache=True, fastmath=True, nogil=True)
+def chroma_transient_improvement(
+    chroma_data: np.ndarray,
     line_start: int,
     line_length: int,
-    f_het: float, 
-    f_sc: float, 
-    base_noise_floor: float = 0.02,
-    cti_blend: float = 1.0,     # Controls the wet/dry mix of the overall effect
-    cti_steepness: float = 1.0  # Controls the slope aggression (0.0=linear, 1.0=max snap)
+    f_het: float,
+    f_sc: float,
+    cti_amount: float, # Controls the wet/dry mix of the overall effect
+    cti_slope: float,  # Controls the slope aggression (0.0=linear, 1.0=max snap)
+    base_noise_floor: float = 0.02, # TODO calculate this based on color burst SNR
 ) -> np.ndarray:
     """
     Accelerates the sweep rate between color states without warping phase angles.
@@ -1939,10 +1941,10 @@ def chroma_phase_focus(
                 else:
                     accelerated_progress = 1.0 - 2.0 * ((1.0 - norm_progress) ** 2)
 
-                soft_accelerated = norm_progress + cti_steepness * (accelerated_progress - norm_progress)
+                soft_accelerated = norm_progress + cti_slope * (accelerated_progress - norm_progress)
 
                 # Blend the original linear transit progress with our tamed sweep track
-                final_progress = norm_progress + cti_blend * (soft_accelerated - norm_progress)
+                final_progress = norm_progress + cti_amount * (soft_accelerated - norm_progress)
                 
                 # Symmetrically interpolate the new position relative to the appropriate window boundary
                 if final_progress < 0.5:
