@@ -21,7 +21,6 @@ from vhsdecode.chroma import chroma_color_under_filter
 import vhsdecode.formats as vhs_formats
 
 from vhsdecode.addons.chromasep import ChromaSepClass
-from vhsdecode.addons.resync import Resync
 from vhsdecode.addons.chromaAFC import ChromaAFC
 
 from vhsdecode.demod import replace_spikes, unwrap_hilbert, smooth_spikes
@@ -978,15 +977,6 @@ class VHSRFDecode(ldd.RFDecode):
                 int(inputfreq // 4),
             )
             level_detect_divisor = int(inputfreq // 4)
-
-        self.resync = Resync(
-            self.freq_hz,
-            self.SysParams,
-            self._sysparams_const,
-            self._processing_thread_pool,
-            divisor=level_detect_divisor,
-            debug=self.debug,
-        )
 
         if self._chroma_trap:
             self.chromaTrap = ChromaSepClass(

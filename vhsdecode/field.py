@@ -1,4 +1,5 @@
 import numpy as np
+import numba as nb
 
 import lddecode.core as ldd
 import lddecode.utils as lddu
@@ -8,12 +9,15 @@ from lddecode.utils import hz_to_output_array
 import vhsdecode.sync as sync
 import vhsdecode.formats as formats
 from vhsdecode.doc import detect_dropouts_rf
-from vhsdecode.addons.resync import Pulse
 from vhsdecode.chroma import decode_chroma, decode_chroma_phase_rotation
 
 from vhsdecode.debug_plot import plot_data_and_pulses
 
+from collections import namedtuple
+
 NO_PULSES_FOUND = 1
+
+Pulse = namedtuple('Pulse', ['start', 'len', 'transition', 'level_low', 'level_high'])
 
 # def ynr(data, hpfdata, line_len):
 #     """Dumb vcr-line ynr
@@ -1202,22 +1206,6 @@ class FieldShared:
                 )
                 valid_pulses.append((HSYNC, curpulse, good))
                 i += 1
-            elif inrange(curpulse.len, lt_hsync[1], lt_hsync[1] * 3):
-                # If the pulse is longer than expected, we could have ended up detecting the back
-                # porch as sync.
-                # try to move a bit lower to see if we hit a hsync.
-                data = self.data["video"]["demod_05"][
-                    curpulse.start : curpulse.start + curpulse.len
-                ]
-                threshold = self.rf.iretohz(self.rf.hztoire(data[0]) - 10)
-                pulses = self.rf.resync.findpulses(data, threshold)
-                if len(pulses):
-                    newpulse = Pulse(curpulse.start + pulses[0].start, pulses[0].len)
-                    self.rawpulses[i] = newpulse
-                    curpulse = newpulse
-                else:
-                    # spulse = (HSYNC, self.rawpulses[i], False)
-                    i += 1
             elif (
                 i > 2
                 and inrange(self.rawpulses[i].len, *lt_eq)
@@ -1240,8 +1228,226 @@ class FieldShared:
 
         return valid_pulses  # , num_vblanks
 
-    def _try_get_pulses(self, check_levels):
-        self.rawpulses = self.rf.resync.get_pulses(self, check_levels)
+    def get_pulses(self, do_level_detect=False):
+        demod = self.data["video"]["demod_05"]
+        hsync_len = self.usectoinpx(self.rf.SysParams["hsyncPulseUS"])
+        front_porch_len = self.usectoinpx(self.rf.SysParams["activeVideoUS"][0] - self.rf.SysParams["hsyncPulseUS"] - 2)
+        line_len = round(self.usectoinpx(self.rf.SysParams["line_period"]))
+
+        # 1. Filter out high frequencies
+        # boxcar FIR filter to remove high frequency data (color burst, pilot tone)
+        approx_transition = self.usectoinpx(0.22)
+        window_size = max(3, int(approx_transition))
+        if window_size % 2 == 0:
+            window_size += 1
+
+        kernel = np.ones(window_size, dtype=np.float64) / window_size
+        filtered_demod = np.convolve(demod, kernel, mode='same')
+
+        if do_level_detect:
+            # try to detect the levels by measuring the lower 5%, and 25% of data
+            n = len(filtered_demod)
+            idx_5, idx_25 = int(n * 0.05), int(n * 0.25)
+            partitioned = np.partition(filtered_demod, (idx_5, idx_25))
+            sync_tip_est, blanking_est = partitioned[idx_5], partitioned[idx_25]
+
+            pulses, sync_tip_level, blanking_level = FieldShared._get_pulses(
+                filtered_demod,
+                hsync_len,
+                front_porch_len,
+                line_len,
+                approx_transition,
+                sync_tip_est,
+                blanking_est
+            )
+        else:
+            pulses, sync_tip_level, blanking_level = FieldShared._get_pulses(
+                filtered_demod,
+                hsync_len,
+                front_porch_len,
+                line_len,
+                approx_transition,
+                self.rf.DecoderParams["ire0"],
+                self.rf.DecoderParams["ire0"] + self.rf.DecoderParams["hz_ire"] * self.rf.DecoderParams["vsync_ire"],
+            )
+
+        # update levels
+        if "backporch" in self.rf.options.ire0_adjust:
+            self.rf.DecoderParams["ire0"] = blanking_level
+            self.rf.DecoderParams["hz_ire"] = (blanking_level - sync_tip_level) / -self.rf.DecoderParams["vsync_ire"]
+
+        return [Pulse(*p) for p in pulses]
+
+    @staticmethod
+    @nb.njit(cache=True, nogil=True, fastmath=True)
+    def _get_pulses(
+        filtered_demod,
+        hsync_len,
+        back_porch_len,
+        line_len,
+        approx_transition,
+        sync_tip_est,
+        blanking_est,
+        sync_spacing_tolerance=0.04
+    ):
+        n_samples = len(filtered_demod)
+        empty_pulses = np.zeros((0, 5), dtype=np.float64)
+
+        slicer_level_est = (sync_tip_est + blanking_est) / 2.0
+        
+        # 2. CANDIDATE EXTRACTION (Time-Domain Width Discriminator)
+        # Extracts falling/rising edges and ignore noise by enforcing a strict H-sync duration window.
+        hsync_falls = np.zeros(n_samples // 10, dtype=np.int32)
+        hsync_rises = np.zeros(n_samples // 10, dtype=np.int32)
+        cand_count = 0
+        w_min, w_max = hsync_len * 0.6, hsync_len * 1.4
+
+        f_idx = -1
+        for i in range(n_samples - 1):
+            if filtered_demod[i] >= slicer_level_est and filtered_demod[i+1] < slicer_level_est:
+                f_idx = i
+            elif f_idx != -1 and filtered_demod[i] < slicer_level_est and filtered_demod[i+1] >= slicer_level_est:
+                width = i - f_idx
+                if w_min < width < w_max:
+                    hsync_falls[cand_count] = f_idx
+                    hsync_rises[cand_count] = i
+                    cand_count += 1
+                f_idx = -1
+
+        if cand_count < 5:
+            return empty_pulses, float(sync_tip_est), float(blanking_est)
+
+        # 3. LOCAL LEVEL MEASUREMENT & AMPLITUDE OUTLIER REJECTION (Clamping Reference Validation)
+        # Samples local windows to find true sync minima and back porch black levels.
+        # Uses MAD to purge anomalous pulses caused by VBI equalization lines or static.
+        cand_sync_levels = np.zeros(cand_count, dtype=np.float64)
+        cand_porch_levels = np.zeros(cand_count, dtype=np.float64)
+        
+        for idx in range(cand_count):
+            # Extract median sync tip floor to reject impulsive noise
+            mid = (hsync_falls[idx] + hsync_rises[idx]) // 2
+            s_win = filtered_demod[max(0, mid-2) : min(n_samples, mid+3)].copy()
+            s_win.sort()
+            cand_sync_levels[idx] = s_win[len(s_win) // 2] if len(s_win) > 0 else sync_tip_est
+            
+            # Extract median back porch level for accurate downstream black-level clamping
+            p_ctr = int(hsync_rises[idx] + back_porch_len * 0.5)
+            p_win = filtered_demod[max(0, p_ctr-2) : min(n_samples, p_ctr+3)].copy()
+            p_win.sort()
+            cand_porch_levels[idx] = p_win[len(p_win) // 2] if len(p_win) > 0 else blanking_est
+
+        # Statistical outlier pruning via Median Absolute Deviation
+        sync_sort = cand_sync_levels[:cand_count].copy()
+        sync_sort.sort()
+        median_sync = sync_sort[cand_count // 2]
+        
+        mad_arr = np.abs(cand_sync_levels[:cand_count] - median_sync)
+        mad_arr.sort()
+        mad_sync = mad_arr[cand_count // 2] if mad_arr[cand_count // 2] > 0.0 else 1.0
+        
+        amp_count = 0
+        for i in range(cand_count):
+            if abs(cand_sync_levels[i] - median_sync) <= 2.5 * mad_sync:
+                hsync_falls[amp_count] = hsync_falls[i]
+                hsync_rises[amp_count] = hsync_rises[i] # Track rise edges through amp pruning
+                cand_sync_levels[amp_count] = cand_sync_levels[i]
+                cand_porch_levels[amp_count] = cand_porch_levels[i]
+                amp_count += 1
+
+        # 4. FLYWHEEL GRID PHASE VERIFICATION (Software Line-Locked Loop Engine)
+        # Emulates a hardware line-locked PLL. Matches candidates against the expected
+        # periodic line duration cadence to drop spurious non-video timing anomalies.
+        final_mask = np.zeros(amp_count, dtype=np.uint8)
+        hsync_fit_count = 0
+        for i in range(amp_count):
+            coincidences = 0
+            for j in range(amp_count):
+                rem = abs(hsync_falls[j] - hsync_falls[i]) % line_len
+                if (rem < line_len * sync_spacing_tolerance) or (rem > line_len * (1.0 - sync_spacing_tolerance)):
+                    coincidences += 1
+            if coincidences - 1 >= 4:
+                final_mask[i] = 1
+                hsync_fit_count += 1
+
+        # 5. REFINED THRESHOLD CALIBRATION (Mean of Flywheel Medians)
+        # Calculates the mean level directly across all flywheel-verified pulses.
+        if hsync_fit_count > 0:
+            sync_sum = 0.0
+            porch_sum = 0.0
+            for i in range(amp_count):
+                if final_mask[i]:
+                    sync_sum += cand_sync_levels[i]
+                    porch_sum += cand_porch_levels[i]
+            
+            sync_tip_level = float(sync_sum / hsync_fit_count)
+            back_porch_level = float(porch_sum / hsync_fit_count)
+        else:
+            sync_tip_level, back_porch_level = float(sync_tip_est), float(blanking_est)
+
+        # 6. SUBPIXEL SYNTHESIS & SIGNAL SHARPNESS ESTIMATION
+        precise_midpoint = (sync_tip_level + back_porch_level) / 2.0
+        f_edges = np.zeros(n_samples // 10, dtype=np.int32)
+        r_edges = np.zeros(n_samples // 10, dtype=np.int32)
+        edge_count = 0
+        
+        f_idx = -1
+        for i in range(n_samples - 1):
+            if filtered_demod[i] >= precise_midpoint and filtered_demod[i+1] < precise_midpoint:
+                f_idx = i
+            elif f_idx != -1 and filtered_demod[i] < precise_midpoint and filtered_demod[i+1] >= precise_midpoint:
+                f_edges[edge_count], r_edges[edge_count] = f_idx, i
+                edge_count += 1
+                f_idx = -1
+
+        if edge_count == 0:
+            return empty_pulses, sync_tip_level, back_porch_level
+
+        # Evaluate the rise-time slope across the 50% slicing point
+        slopes = np.zeros(edge_count, dtype=np.float64)
+        sr_count = 0
+        for i in range(edge_count):
+            r = r_edges[i]
+            if 10 < r < n_samples - 10:
+                slopes[sr_count] = abs(filtered_demod[r + 1] - filtered_demod[r - 1])
+                sr_count += 1
+                
+        if sr_count > 0:
+            valid_slopes = slopes[:sr_count]
+            valid_slopes.sort()
+            fit_sharpness = max(0.1, valid_slopes[sr_count // 2] / max(1e-5, (back_porch_level - sync_tip_level)))
+            transition = 1.0 / fit_sharpness
+        else:
+            transition = approx_transition
+
+        # Map calibrated structures into final subpixel TBC time indices
+        output_pulses = np.zeros((edge_count, 5), dtype=np.float64)
+        pulse_count = 0
+        for i in range(edge_count):
+            fe, re = f_edges[i], r_edges[i]
+            yf0, yf1 = filtered_demod[fe] - precise_midpoint, filtered_demod[fe + 1] - precise_midpoint
+            subpixel_f = fe + (yf0 / (yf0 - yf1) if (yf0 - yf1) != 0.0 else 0.0)
+            
+            yr0, yr1 = filtered_demod[re] - precise_midpoint, filtered_demod[re + 1] - precise_midpoint
+            subpixel_r = re + (abs(yr0) / (yr1 - yr0) if (yr1 - yr0) != 0.0 else 0.0)
+            
+            calc_len = subpixel_r - subpixel_f
+            if calc_len <= 0: 
+                continue
+                
+            s_idx = int(subpixel_f + (calc_len * 0.5))
+            p_idx = int(subpixel_r + (back_porch_len * 0.5))
+            
+            output_pulses[pulse_count, 0] = round(subpixel_f)
+            output_pulses[pulse_count, 1] = round(calc_len)
+            output_pulses[pulse_count, 2] = transition * 2.0
+            output_pulses[pulse_count, 3] = filtered_demod[s_idx] if s_idx < n_samples else sync_tip_level
+            output_pulses[pulse_count, 4] = filtered_demod[p_idx] if 0 <= p_idx < n_samples else back_porch_level
+            pulse_count += 1
+
+        return output_pulses[:pulse_count], sync_tip_level, back_porch_level
+
+    def _try_get_pulses(self, do_level_detect):
+        self.rawpulses = self.get_pulses(do_level_detect)
 
         if (
             self.rawpulses is None
@@ -1352,14 +1558,8 @@ class FieldShared:
         return self._compute_linelocs_issues
 
     def compute_linelocs(self):
-        has_levels = self.rf.resync.has_levels()
-
-        # Skip vsync serration/level detect if we already have levels from a previous field and
-        # the option is enabled.
-        # Also run level detection if we encountered issues in this function in the previous field.
         do_level_detect = (
-            not self.rf.options.saved_levels
-            or not has_levels
+            self.rf.options.saved_levels is False
             or self.rf.compute_linelocs_issues is True
         )
         res = self._try_get_pulses(do_level_detect)
@@ -1395,7 +1595,6 @@ class FieldShared:
                 raw_pulses=self.rawpulses,
                 threshold=self.rf.iretohz(self.rf.SysParams["vsync_ire"] / 2),
             )
-        # threshold=self.rf.resync.last_pulse_threshold
 
         if first_hsync_loc is None:
             if self.initphase is False:
@@ -1477,11 +1676,7 @@ class FieldShared:
 
     def refine_linelocs_hsync(self):
         if not self.rf.options.skip_hsync_refine:
-            threshold = (
-                self.rf.resync.last_pulse_threshold
-                if self.rf.options.hsync_refine_use_threshold
-                else self.rf.iretohz(self.rf.SysParams["vsync_ire"] / 2)
-            )
+            threshold = self.rf.iretohz(self.rf.SysParams["vsync_ire"] / 2)
 
             return sync.refine_linelocs_hsync(self, self.linebad, threshold)
         else:
@@ -1674,7 +1869,7 @@ class FieldShared:
 
     def getpulses(self):
         """Find sync pulses in the demodulated video signal"""
-        return self.rf.resync.get_pulses(self)
+        return self.get_pulses()
 
     def compute_deriv_error(self, linelocs, baserr):
         """Disabled this for now as tapes have large variations in line pos
