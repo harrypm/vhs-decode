@@ -1682,11 +1682,27 @@ def process_chroma(
     if field.burst_detected_line == -1:
         # skip chroma if the color killer is active for the whole field
         return uphet
+    
+    if (
+        not field.rf.options.disable_phase_correction
+        and field.rf.color_system == "NTSC"
+    ):
+        field.fieldPhaseID, target_phase = ntsc_color_framing_map[
+            (field.isFirstField, (field.field_number // 2) % 2)
+        ]
+        chroma_shift_direction = 1 if target_phase else -1
+    else:
+        chroma_shift_direction = 0
 
     # Run TBC/downscale on chroma (if new field, else uses cache)
     # Cached if chroma process is run multiple times on one field due to track detection.
     if field.chroma_tbc_buffer is None:
-        chroma, _, _ = ldd.Field.downscale(field, channel="demod_burst")
+        # shift the chroma to reverse group delay caused by the color under heterodyne filter
+        # this is dependent on color framing, and is disabled if color framing is disabled
+        # TODO: may need tuning / needs validation
+        chroma_subcarrier_delay_cycles = field.rf.chroma_afc.fsc_mhz * 1e6 / (2.0 * np.pi * field.rf.chroma_afc.color_under)
+        chroma_subcarrier_delay_samples = chroma_subcarrier_delay_cycles * 4
+        chroma, _, _ = ldd.Field.downscale(field, channel="demod_burst", shift=chroma_subcarrier_delay_samples * chroma_shift_direction)
 
         # If chroma AFC is enabled
         if field.rf.do_cafc:
@@ -1755,9 +1771,6 @@ def process_chroma(
         not field.rf.options.disable_phase_correction
         and field.rf.color_system == "NTSC"
     ):
-        field.fieldPhaseID, target_phase = ntsc_color_framing_map[
-            (field.isFirstField, (field.field_number // 2) % 2)
-        ]
         target_phase_even = target_phase
         target_phase_odd = target_phase
 
