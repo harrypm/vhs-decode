@@ -1850,8 +1850,103 @@ def process_chroma(
 
     field.rf.field_averages.chroma_level.push(mean_rms)
 
+    uphet = chroma_phase_focus(
+        uphet,
+        lineoffset * outwidth,
+        outwidth,
+        field.rf.chroma_afc.color_under,
+        field.rf.chroma_afc.fsc_mhz * 1e6,
+    )
+
     return uphet
 
+@njit
+def chroma_phase_focus(
+    chroma_data: np.ndarray, 
+    line_start: int,
+    line_length: int,
+    f_het: float, 
+    f_sc: float, 
+    base_noise_floor: float = 0.02,
+    cti_blend: float = 1  # 0.0 = original slow sweep, 1.0 = maximum accelerated sweep
+) -> np.ndarray:
+    """
+    Accelerates the sweep rate between color states without warping phase angles.
+    Operates on the complex color vector components, using a non-linear look-ahead
+    weighting function to sharpen transition boundaries.
+    """
+    output = np.copy(chroma_data)
+    
+    remaining_samples = chroma_data.shape[0] - line_start
+    line_count = remaining_samples // line_length
+    
+    # Calculate the format bandwidth deficit ratio to set our adaptive window
+    freq_ratio = f_sc / f_het
+    mad_threshold = base_noise_floor * (freq_ratio ** 0.5)
+    
+    # The sweep window radius matches the expected transition blur width of the format
+    sweep_radius = int(max(2.0, 1.5 * freq_ratio))
+    
+    # Allocate full vector component arrays (In-phase and Quadrature)
+    # to process transitions in linear color space
+    i_signal = np.zeros_like(chroma_data, dtype=np.float64)
+    q_signal = np.zeros_like(chroma_data, dtype=np.float64)
+
+    # 1. Component Extraction (Demodulation mapping)
+    for l in range(line_count):
+        curr_line_offset = line_start + (l * line_length)
+        for s in range(1, line_length):
+            idx = curr_line_offset + s
+            i_signal[idx] = chroma_data[idx]
+            q_signal[idx] = chroma_data[idx - 1]
+
+    # 2. Vector Sweep-Rate Acceleration Stage
+    for l in range(line_count):
+        curr_line_offset = line_start + (l * line_length)
+        
+        for s in range(sweep_radius + 1, line_length - (sweep_radius + 1)):
+            idx = curr_line_offset + s
+            
+            # Look at the total vector distance change over the local format window
+            idx_past = idx - sweep_radius
+            idx_future = idx + sweep_radius
+            
+            i_delta_total = i_signal[idx_future] - i_signal[idx_past]
+            q_delta_total = q_signal[idx_future] - q_signal[idx_past]
+            total_sweep_distance = np.sqrt(i_delta_total**2 + q_delta_total**2)
+            
+            # Noise Gate: Only accelerate significant color sweeps (prevents breathing in noise)
+            if total_sweep_distance > mad_threshold:
+                # Determine where the current sample sits relative to the past and future color states
+                i_local_progress = i_signal[idx] - i_signal[idx_past]
+                q_local_progress = q_signal[idx] - q_signal[idx_past]
+                
+                # Project the current sample onto the overall transition vector
+                # to get a clean linear progress metric (0.0 to 1.0)
+                dot_product = (i_local_progress * i_delta_total) + (q_local_progress * q_delta_total)
+                norm_progress = dot_product / (total_sweep_distance**2 + 1e-6)
+                
+                if norm_progress < 0.0: norm_progress = 0.0
+                if norm_progress > 1.0: norm_progress = 1.0
+                
+                # Transform the progress via a sigmoidal sweep-acceleration function.
+                # This compresses the mid-point transition time, spending fewer samples 
+                # "in-between" colors and snapping closer to the endpoints.
+                if norm_progress < 0.5:
+                    accelerated_progress = 2.0 * (norm_progress ** 2)
+                else:
+                    accelerated_progress = 1.0 - 2.0 * ((1.0 - norm_progress) ** 2)
+                
+                # Blend the original linear transit progress with our accelerated sweep track
+                final_progress = norm_progress + cti_blend * (accelerated_progress - norm_progress)
+                
+                # Interpolate the new accelerated vector position along the natural color path
+                i_accelerated = i_signal[idx_past] + (final_progress * i_delta_total)
+                
+                # Re-insert the sharpened component directly into the carrier waveform
+                output[idx] = i_accelerated
+
+    return output
 
 def decode_chroma(field, do_chroma_deemphasis=False):
     if field.rf.options.write_chroma:
