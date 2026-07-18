@@ -1868,12 +1868,13 @@ def chroma_phase_focus(
     f_het: float, 
     f_sc: float, 
     base_noise_floor: float = 0.02,
-    cti_blend: float = 1  # 0.0 = original slow sweep, 1.0 = maximum accelerated sweep
+    cti_blend: float = 1.0,     # Controls the wet/dry mix of the overall effect
+    cti_steepness: float = 1.0  # Controls the slope aggression (0.0=linear, 1.0=max snap)
 ) -> np.ndarray:
     """
     Accelerates the sweep rate between color states without warping phase angles.
-    Operates on the complex color vector components, using a non-linear look-ahead
-    weighting function to sharpen transition boundaries.
+    Operates symmetrically by measuring both forward and backward vector neighbors 
+    simultaneously to center and sharpen transition boundaries.
     """
     output = np.copy(chroma_data)
     
@@ -1900,53 +1901,66 @@ def chroma_phase_focus(
             i_signal[idx] = chroma_data[idx]
             q_signal[idx] = chroma_data[idx - 1]
 
-    # 2. Vector Sweep-Rate Acceleration Stage
+    # 2. Symmetric Vector Sweep-Rate Acceleration Stage
     for l in range(line_count):
         curr_line_offset = line_start + (l * line_length)
         
         for s in range(sweep_radius + 1, line_length - (sweep_radius + 1)):
             idx = curr_line_offset + s
             
-            # Look at the total vector distance change over the local format window
             idx_past = idx - sweep_radius
             idx_future = idx + sweep_radius
             
-            i_delta_total = i_signal[idx_future] - i_signal[idx_past]
-            q_delta_total = q_signal[idx_future] - q_signal[idx_past]
-            total_sweep_distance = np.sqrt(i_delta_total**2 + q_delta_total**2)
+            # --- Symmetric Neighborhood Vector Measurements ---
+            # Measure vector distance traveled from the backward neighbor to current sample
+            i_delta_back = i_signal[idx] - i_signal[idx_past]
+            q_delta_back = q_signal[idx] - q_signal[idx_past]
+            dist_back = np.sqrt(i_delta_back**2 + q_delta_back**2)
             
-            # Noise Gate: Only accelerate significant color sweeps (prevents breathing in noise)
+            # Measure vector distance remaining from current sample to the forward neighbor
+            i_delta_forw = i_signal[idx_future] - i_signal[idx]
+            q_delta_forw = q_signal[idx_future] - q_signal[idx]
+            dist_forw = np.sqrt(i_delta_forw**2 + q_delta_forw**2)
+            
+            # Total local vector sweep span across the entire window
+            total_sweep_distance = dist_back + dist_forw
+            
+            # Noise Gate: Only accelerate active color transitions
             if total_sweep_distance > mad_threshold:
-                # Determine where the current sample sits relative to the past and future color states
-                i_local_progress = i_signal[idx] - i_signal[idx_past]
-                q_local_progress = q_signal[idx] - q_signal[idx_past]
-                
-                # Project the current sample onto the overall transition vector
-                # to get a clean linear progress metric (0.0 to 1.0)
-                dot_product = (i_local_progress * i_delta_total) + (q_local_progress * q_delta_total)
-                norm_progress = dot_product / (total_sweep_distance**2 + 1e-6)
+                # Determine progress based symmetrically on the ratio of both neighbors
+                norm_progress = dist_back / (total_sweep_distance + 1e-6)
                 
                 if norm_progress < 0.0: norm_progress = 0.0
                 if norm_progress > 1.0: norm_progress = 1.0
                 
-                # Transform the progress via a sigmoidal sweep-acceleration function.
-                # This compresses the mid-point transition time, spending fewer samples 
-                # "in-between" colors and snapping closer to the endpoints.
+                # Transform the progress via your sigmoidal sweep-acceleration function.
                 if norm_progress < 0.5:
                     accelerated_progress = 2.0 * (norm_progress ** 2)
                 else:
                     accelerated_progress = 1.0 - 2.0 * ((1.0 - norm_progress) ** 2)
+
+                soft_accelerated = norm_progress + cti_steepness * (accelerated_progress - norm_progress)
+
+                # Blend the original linear transit progress with our tamed sweep track
+                final_progress = norm_progress + cti_blend * (soft_accelerated - norm_progress)
                 
-                # Blend the original linear transit progress with our accelerated sweep track
-                final_progress = norm_progress + cti_blend * (accelerated_progress - norm_progress)
-                
-                # Interpolate the new accelerated vector position along the natural color path
-                i_accelerated = i_signal[idx_past] + (final_progress * i_delta_total)
+                # Symmetrically interpolate the new position relative to the appropriate window boundary
+                if final_progress < 0.5:
+                    # Before the transition center: sharpen transition entry relative to the past state
+                    # Scale factor maps the 0.0-0.5 range to a 0.0-1.0 interpolation weight
+                    t = final_progress * 2.0
+                    i_accelerated = i_signal[idx_past] + t * (i_signal[idx] - i_signal[idx_past])
+                else:
+                    # After the transition center: sharpen transition exit relative to the future state
+                    # Scale factor maps the 0.5-1.0 range to a 0.0-1.0 interpolation weight
+                    t = (final_progress - 0.5) * 2.0
+                    i_accelerated = i_signal[idx] + t * (i_signal[idx_future] - i_signal[idx])
                 
                 # Re-insert the sharpened component directly into the carrier waveform
                 output[idx] = i_accelerated
 
     return output
+
 
 def decode_chroma(field, do_chroma_deemphasis=False):
     if field.rf.options.write_chroma:
