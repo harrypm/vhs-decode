@@ -1863,7 +1863,7 @@ def process_chroma(
 
     field.rf.field_averages.chroma_level.push(mean_rms)
 
-    uphet = chroma_transient_improvement(
+    chroma_transient_improvement(
         uphet,
         lineoffset * outwidth,
         outwidth,
@@ -1874,6 +1874,7 @@ def process_chroma(
     )
 
     return uphet
+
 
 @njit(cache=True, fastmath=True, nogil=True)
 def chroma_transient_improvement(
@@ -1891,8 +1892,6 @@ def chroma_transient_improvement(
     Operates symmetrically by measuring both forward and backward vector neighbors 
     simultaneously to center and sharpen transition boundaries.
     """
-    output = np.copy(chroma_data)
-    
     remaining_samples = chroma_data.shape[0] - line_start
     line_count = remaining_samples // line_length
     
@@ -1903,78 +1902,103 @@ def chroma_transient_improvement(
     # The sweep window radius matches the expected transition blur width of the format
     sweep_radius = int(max(2.0, 1.5 * freq_ratio))
     
-    # Allocate full vector component arrays (In-phase and Quadrature)
-    # to process transitions in linear color space
-    i_signal = np.zeros_like(chroma_data, dtype=np.float64)
-    q_signal = np.zeros_like(chroma_data, dtype=np.float64)
+    # Pre-calculate constants for the internal interpolation logic
+    inv_cti_slope = 1.0 - cti_slope
+    inv_cti_amount = 1.0 - cti_amount
 
-    # 1. Component Extraction (Demodulation mapping)
-    for l in range(line_count):
-        curr_line_offset = line_start + (l * line_length)
-        for s in range(1, line_length):
-            idx = curr_line_offset + s
-            i_signal[idx] = chroma_data[idx]
-            q_signal[idx] = chroma_data[idx - 1]
+    # Allocate a local line-buffered cache for the neighborhood to allow in-place modification
+    # Stores from (s - sweep_radius - 1) to (s + sweep_radius)
+    cache_size = 2 * sweep_radius + 2
+    local_cache = np.zeros(cache_size, dtype=chroma_data.dtype)
 
-    # 2. Symmetric Vector Sweep-Rate Acceleration Stage
     for l in range(line_count):
         curr_line_offset = line_start + (l * line_length)
         
-        for s in range(sweep_radius + 1, line_length - (sweep_radius + 1)):
+        # Outer boundary bounds to protect against edge bleeding
+        start_s = sweep_radius + 1
+        end_s = line_length - (sweep_radius + 1)
+        if end_s <= start_s:
+            continue
+
+        # Prime the local cache with the un-mutated input data for the first window position
+        # Cache index 0 maps to (start_s - sweep_radius - 1)
+        first_idx = curr_line_offset + start_s - sweep_radius - 1
+        for c in range(cache_size):
+            local_cache[c] = chroma_data[first_idx + c]
+
+        # Process the video line samples sequentially
+        for s in range(start_s, end_s):
             idx = curr_line_offset + s
             
-            idx_past = idx - sweep_radius
-            idx_future = idx + sweep_radius
+            # Static sliding cache references mapping directly to the window boundaries:
+            # Past index maps to: s - sweep_radius
+            c_past = 1
+            # Current index maps to: s
+            c_curr = sweep_radius + 1
+            # Future index maps to: s + sweep_radius
+            c_future = cache_size - 1
+            
+            # --- Inline Real-Time Component Extraction ---
+            # I-channel = chroma_data[target], Q-channel = chroma_data[target - 1]
+            i_curr = local_cache[c_curr]
+            q_curr = local_cache[c_curr - 1]
+            
+            i_past = local_cache[c_past]
+            q_past = local_cache[c_past - 1]
+            
+            i_future = local_cache[c_future]
+            q_future = local_cache[c_future - 1]
             
             # --- Symmetric Neighborhood Vector Measurements ---
-            # Measure vector distance traveled from the backward neighbor to current sample
-            i_delta_back = i_signal[idx] - i_signal[idx_past]
-            q_delta_back = q_signal[idx] - q_signal[idx_past]
+            i_delta_back = i_curr - i_past
+            q_delta_back = q_curr - q_past
             dist_back = np.sqrt(i_delta_back**2 + q_delta_back**2)
             
-            # Measure vector distance remaining from current sample to the forward neighbor
-            i_delta_forw = i_signal[idx_future] - i_signal[idx]
-            q_delta_forw = q_signal[idx_future] - q_signal[idx]
+            i_delta_forw = i_future - i_curr
+            q_delta_forw = q_future - q_curr
             dist_forw = np.sqrt(i_delta_forw**2 + q_delta_forw**2)
             
-            # Total local vector sweep span across the entire window
             total_sweep_distance = dist_back + dist_forw
             
             # Noise Gate: Only accelerate active color transitions
             if total_sweep_distance > mad_threshold:
-                # Determine progress based symmetrically on the ratio of both neighbors
                 norm_progress = dist_back / (total_sweep_distance + 1e-6)
                 
                 if norm_progress < 0.0: norm_progress = 0.0
-                if norm_progress > 1.0: norm_progress = 1.0
+                elif norm_progress > 1.0: norm_progress = 1.0
                 
-                # Transform the progress via your sigmoidal sweep-acceleration function.
+                # Transform the progress via sigmoidal sweep-acceleration function
                 if norm_progress < 0.5:
                     accelerated_progress = 2.0 * (norm_progress ** 2)
                 else:
                     accelerated_progress = 1.0 - 2.0 * ((1.0 - norm_progress) ** 2)
 
-                soft_accelerated = norm_progress + cti_slope * (accelerated_progress - norm_progress)
+                soft_accelerated = norm_progress * inv_cti_slope + cti_slope * accelerated_progress
 
-                # Blend the original linear transit progress with our tamed sweep track
-                final_progress = norm_progress + cti_amount * (soft_accelerated - norm_progress)
+                # Blend the original with corrected
+                final_progress = norm_progress * inv_cti_amount + cti_amount * soft_accelerated
                 
                 # Symmetrically interpolate the new position relative to the appropriate window boundary
                 if final_progress < 0.5:
                     # Before the transition center: sharpen transition entry relative to the past state
                     # Scale factor maps the 0.0-0.5 range to a 0.0-1.0 interpolation weight
                     t = final_progress * 2.0
-                    i_accelerated = i_signal[idx_past] + t * (i_signal[idx] - i_signal[idx_past])
+                    i_accelerated = i_past + t * (i_curr - i_past)
                 else:
                     # After the transition center: sharpen transition exit relative to the future state
                     # Scale factor maps the 0.5-1.0 range to a 0.0-1.0 interpolation weight
                     t = (final_progress - 0.5) * 2.0
-                    i_accelerated = i_signal[idx] + t * (i_signal[idx_future] - i_signal[idx])
+                    i_accelerated = i_curr + t * (i_future - i_curr)
                 
-                # Re-insert the sharpened component directly into the carrier waveform
-                output[idx] = i_accelerated
+                # Re-insert the sharpened component directly into the original carrier waveform array
+                chroma_data[idx] = i_accelerated
 
-    return output
+            # --- Shift the Sliding Window Cache Left ---
+            for c in range(cache_size - 1):
+                local_cache[c] = local_cache[c + 1]
+
+            if s + 1 < end_s:
+                local_cache[cache_size - 1] = chroma_data[idx + sweep_radius + 1]
 
 
 def decode_chroma(field, do_chroma_deemphasis=False):
