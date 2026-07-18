@@ -1863,15 +1863,14 @@ def process_chroma(
 
     field.rf.field_averages.chroma_level.push(mean_rms)
 
-    chroma_transient_improvement(
-        uphet,
-        lineoffset * outwidth,
-        outwidth,
-        field.rf.chroma_afc.color_under,
-        field.rf.chroma_afc.fsc_mhz * 1e6,
-        field.rf.options.cti_amount,
-        field.rf.options.cti_slope
-    )
+    if field.rf.options.cti_mix != 0:
+        chroma_transient_improvement(
+            uphet,
+            lineoffset * outwidth,
+            outwidth,
+            field.rf.options.cti_width,
+            field.rf.options.cti_mix,
+        )
 
     return uphet
 
@@ -1881,11 +1880,9 @@ def chroma_transient_improvement(
     chroma_data: np.ndarray,
     line_start: int,
     line_length: int,
-    f_het: float,
-    f_sc: float,
-    cti_amount: float, # Controls the wet/dry mix of the overall effect
-    cti_slope: float,  # Controls the slope aggression (0.0=linear, 1.0=max snap)
-    base_noise_floor: float = 0.02, # TODO calculate this based on color burst SNR
+    cti_width: int,
+    cti_mix: float,
+    base_noise_floor: float = 0.02,
 ) -> np.ndarray:
     """
     Accelerates the sweep rate between color states without warping phase angles.
@@ -1895,19 +1892,16 @@ def chroma_transient_improvement(
     remaining_samples = chroma_data.shape[0] - line_start
     line_count = remaining_samples // line_length
     
-    # Calculate the format bandwidth deficit ratio to set our adaptive window
-    freq_ratio = f_sc / f_het
-    mad_threshold = base_noise_floor * (freq_ratio ** 0.5)
+    # Establish the 4fsc phase-locked sweep radius
+    sweep_radius = int(max(4, cti_width * 4))
     
-    # The sweep window radius matches the expected transition blur width of the format
-    sweep_radius = int(max(2.0, 1.5 * freq_ratio))
+    # Noise threshold scaled with the size of the window footprint
+    mad_threshold = base_noise_floor * (cti_width ** 0.5)
     
-    # Pre-calculate constants for the internal interpolation logic
-    inv_cti_slope = 1.0 - cti_slope
-    inv_cti_amount = 1.0 - cti_amount
+    # Pre-calculate inversion constants for the mixing logic
+    inv_cti_mix = 1.0 - cti_mix
 
     # Allocate a local line-buffered cache for the neighborhood to allow in-place modification
-    # Stores from (s - sweep_radius - 1) to (s + sweep_radius)
     cache_size = 2 * sweep_radius + 2
     local_cache = np.zeros(cache_size, dtype=chroma_data.dtype)
 
@@ -1921,7 +1915,6 @@ def chroma_transient_improvement(
             continue
 
         # Prime the local cache with the un-mutated input data for the first window position
-        # Cache index 0 maps to (start_s - sweep_radius - 1)
         first_idx = curr_line_offset + start_s - sweep_radius - 1
         for c in range(cache_size):
             local_cache[c] = chroma_data[first_idx + c]
@@ -1930,16 +1923,12 @@ def chroma_transient_improvement(
         for s in range(start_s, end_s):
             idx = curr_line_offset + s
             
-            # Static sliding cache references mapping directly to the window boundaries:
-            # Past index maps to: s - sweep_radius
+            # Static sliding cache references mapping directly to the window boundaries
             c_past = 1
-            # Current index maps to: s
             c_curr = sweep_radius + 1
-            # Future index maps to: s + sweep_radius
             c_future = cache_size - 1
             
             # --- Inline Real-Time Component Extraction ---
-            # I-channel = chroma_data[target], Q-channel = chroma_data[target - 1]
             i_curr = local_cache[c_curr]
             q_curr = local_cache[c_curr - 1]
             
@@ -1973,10 +1962,8 @@ def chroma_transient_improvement(
                 else:
                     accelerated_progress = 1.0 - 2.0 * ((1.0 - norm_progress) ** 2)
 
-                soft_accelerated = norm_progress * inv_cti_slope + cti_slope * accelerated_progress
-
-                # Blend the original with corrected
-                final_progress = norm_progress * inv_cti_amount + cti_amount * soft_accelerated
+                # Mix the original linear trace with the accelerated sigmoidal curve
+                final_progress = norm_progress * inv_cti_mix + cti_mix * accelerated_progress
                 
                 # Symmetrically interpolate the new position relative to the appropriate window boundary
                 if final_progress < 0.5:
