@@ -325,9 +325,8 @@ def main(args=None, use_gui=False):
         type=float,
         default=1,
         help=(
-            "Sets Chroma Transient Improvement amount (color-under only). This is wet/dry mix of the overall effect. Set to 0 to disable. Default is 1. Set to 0 to disable cti."
-            "\n  Chroma Transient Improvement helps to re-focus the up-converted color under. This increases how quickly color can change."
-            "\n  In the case of chroma noise in noisy sources, this value can be reduced at the cost of worse chroma transient response"
+            "Sets Chroma Transient Improvement amount (color-under only). This is wet/dry mix of the overall effect. Set to 0 to disable. Default is 1. Set to 0 to disable CTI."
+            "\n  Chroma Transient Improvement helps to re-focus edges the up-converted color under. This increases how quickly color can change."
         ),
     )
     chroma_group.add_argument(
@@ -336,7 +335,10 @@ def main(args=None, use_gui=False):
         type=int,
         default=2,
         help=(
-            "Sets Chroma Transient Improvement rate (color-under only). This controls how sharply to focus the chroma in units of subcarrier cycles. Default is 2."
+            "Sets Chroma Transient Improvement width (color-under only). This controls how sharply to focus the chroma in units of subcarrier cycles. Default is 2."
+            "\n  Since color under has lower bandwidth than the source, some of the hue detail is lost and sharper edges can be recovered with CTI"
+            "\n  * Larger width  -> more edge sharpness, less hue detail."
+            "\n  * Smaller width -> more hue detail, less edge sharpness."
         ),
     )
     chroma_group.add_argument(
