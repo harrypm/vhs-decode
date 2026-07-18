@@ -1258,7 +1258,7 @@ class FieldShared:
                 line_len,
                 approx_transition,
                 sync_tip_est,
-                blanking_est
+                blanking_est,
             )
         else:
             pulses, sync_tip_level, blanking_level = FieldShared._get_pulses(
@@ -1274,6 +1274,8 @@ class FieldShared:
         # update levels
         if "backporch" in self.rf.options.ire0_adjust:
             self.rf.DecoderParams["ire0"] = blanking_level
+
+        if "hsync" in self.rf.options.ire0_adjust:
             self.rf.DecoderParams["hz_ire"] = (blanking_level - sync_tip_level) / -self.rf.DecoderParams["vsync_ire"]
 
         return [Pulse(*p) for p in pulses]
@@ -1288,7 +1290,10 @@ class FieldShared:
         approx_transition,
         sync_tip_est,
         blanking_est,
-        sync_spacing_tolerance=0.04
+        # tolerance of gap length between hsync pulses (ratio of linelen)
+        # essentially the speed tolerance in one direction (not +-)
+        sync_spacing_tolerance=0.15,
+        min_grid_length=8  # Minimum number of connected lines to keep a grid set
     ):
         n_samples = len(filtered_demod)
         empty_pulses = np.zeros((0, 5), dtype=np.float64)
@@ -1314,7 +1319,7 @@ class FieldShared:
                     cand_count += 1
                 f_idx = -1
 
-        if cand_count < 5:
+        if cand_count == 0:
             return empty_pulses, float(sync_tip_est), float(blanking_est)
 
         # 3. LOCAL LEVEL MEASUREMENT & AMPLITUDE OUTLIER REJECTION (Clamping Reference Validation)
@@ -1349,28 +1354,50 @@ class FieldShared:
         for i in range(cand_count):
             if abs(cand_sync_levels[i] - median_sync) <= 2.5 * mad_sync:
                 hsync_falls[amp_count] = hsync_falls[i]
-                hsync_rises[amp_count] = hsync_rises[i] # Track rise edges through amp pruning
+                hsync_rises[amp_count] = hsync_rises[i]
                 cand_sync_levels[amp_count] = cand_sync_levels[i]
                 cand_porch_levels[amp_count] = cand_porch_levels[i]
                 amp_count += 1
 
-        # 4. FLYWHEEL GRID PHASE VERIFICATION (Software Line-Locked Loop Engine)
-        # Emulates a hardware line-locked PLL. Matches candidates against the expected
-        # periodic line duration cadence to drop spurious non-video timing anomalies.
+        if amp_count == 0:
+            return empty_pulses, float(sync_tip_est), float(blanking_est)
+
+        # 4. MULTI-GRID DENSITY LOCK (Directional Coherence Filter)
+        grid_support_count = np.zeros(amp_count, dtype=np.int32)
+        
+        # Calculate the directional baseline stride
+        eff_line_len = line_len * (1.0 + sync_spacing_tolerance)
+        jitter_tol = line_len * 0.1
+        
+        for i in range(amp_count):
+            connections = 1  
+            for j in range(amp_count):
+                if i == j:
+                    continue
+                
+                # Enforce chronological directionality 
+                if j > i:
+                    delta = hsync_falls[j] - hsync_falls[i]
+                    rem = delta % eff_line_len
+                else:
+                    delta = hsync_falls[i] - hsync_falls[j]
+                    rem = delta % eff_line_len
+                
+                # Check if the step falls within the tight jitter window along the directional vector
+                if (rem < jitter_tol) or (rem > eff_line_len - jitter_tol):
+                    connections += 1
+                    
+            grid_support_count[i] = connections
+
+        # Generate a selection mask keeping only elements part of an appropriately sized run
         final_mask = np.zeros(amp_count, dtype=np.uint8)
         hsync_fit_count = 0
         for i in range(amp_count):
-            coincidences = 0
-            for j in range(amp_count):
-                rem = abs(hsync_falls[j] - hsync_falls[i]) % line_len
-                if (rem < line_len * sync_spacing_tolerance) or (rem > line_len * (1.0 - sync_spacing_tolerance)):
-                    coincidences += 1
-            if coincidences - 1 >= 4:
+            if grid_support_count[i] >= min_grid_length:
                 final_mask[i] = 1
                 hsync_fit_count += 1
 
-        # 5. REFINED THRESHOLD CALIBRATION (Mean of Flywheel Medians)
-        # Calculates the mean level directly across all flywheel-verified pulses.
+        # 5. REFINED THRESHOLD CALIBRATION
         if hsync_fit_count > 0:
             sync_sum = 0.0
             porch_sum = 0.0
@@ -1384,7 +1411,7 @@ class FieldShared:
         else:
             sync_tip_level, back_porch_level = float(sync_tip_est), float(blanking_est)
 
-        # 6. SUBPIXEL SYNTHESIS & SIGNAL SHARPNESS ESTIMATION
+        # 6. SUBPIXEL SYNTHESIS & COHERENT EDGE EXTRACTION
         precise_midpoint = (sync_tip_level + back_porch_level) / 2.0
         f_edges = np.zeros(n_samples // 10, dtype=np.int32)
         r_edges = np.zeros(n_samples // 10, dtype=np.int32)
@@ -1395,6 +1422,26 @@ class FieldShared:
             if filtered_demod[i] >= precise_midpoint and filtered_demod[i+1] < precise_midpoint:
                 f_idx = i
             elif f_idx != -1 and filtered_demod[i] < precise_midpoint and filtered_demod[i+1] >= precise_midpoint:
+                # -------------------------------------------------------------
+                # MULTI-GRID DIRECTIONAL NEIGHBORHOOD VALIDATION
+                # -------------------------------------------------------------
+                belongs_to_valid_grid = False
+                for c_idx in range(amp_count):
+                    if final_mask[c_idx]:
+                        if f_idx >= hsync_falls[c_idx]:
+                            delta = f_idx - hsync_falls[c_idx]
+                        else:
+                            delta = hsync_falls[c_idx] - f_idx
+                            
+                        rem = delta % eff_line_len
+                        if (rem < jitter_tol) or (rem > eff_line_len - jitter_tol):
+                            belongs_to_valid_grid = True
+                            break
+                
+                if not belongs_to_valid_grid:
+                    f_idx = -1  
+                    continue
+                # -------------------------------------------------------------
                 f_edges[edge_count], r_edges[edge_count] = f_idx, i
                 edge_count += 1
                 f_idx = -1
