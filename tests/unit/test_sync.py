@@ -13,7 +13,7 @@ def pal_rfdecoder():
     ldd.logger = logging.getLogger("test")
     ldd.logger.setLevel(5)
     return process.VHSRFDecode(
-        inputfreq=40, system="PAL", tape_format="VHS", rf_options=rf_options
+        inputfreq=40, system="PAL", tape_format="VHS"
     )
 
 

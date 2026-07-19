@@ -91,9 +91,8 @@ def test_sync(filename, num_pulses=None, blank_approx=None, sync_approx=None):
     ldd.logger.info("test")
 
     # process.VHSDecode("infile", "outfile", ,inputfreq=samplerate_mhz, system="PAL", tape_format="VHS")
-    rf_options = {}
     rfdecoder = process.VHSRFDecode(
-        inputfreq=samplerate_mhz, system="PAL", tape_format="VHS", rf_options=rf_options
+        inputfreq=samplerate_mhz, system="PAL", tape_format="VHS"
     )
 
     demod_05_data = np.loadtxt(filename)
@@ -210,9 +209,8 @@ class LevelDetect(unittest.TestCase):
         ldd.logger.info("test")
         demod_05_data = np.loadtxt("PAL_GOOD.txt.gz")
 
-        rf_options = {}
         rfdecoder = process.VHSRFDecode(
-            inputfreq=40, system="PAL", tape_format="VHS", rf_options=rf_options
+            inputfreq=40, system="PAL", tape_format="VHS"
         )
 
         data_stub = {}
