@@ -5,6 +5,7 @@ import lddecode.core as ldd
 import lddecode.utils as lddu
 from lddecode.utils import inrange
 from lddecode.utils import hz_to_output_array
+import matplotlib.pyplot as plt
 
 import vhsdecode.sync as sync
 import vhsdecode.formats as formats
@@ -1278,7 +1279,6 @@ class FieldShared:
         if "hsync" in self.rf.options.ire0_adjust:
             self.rf.DecoderParams["hz_ire"] = (blanking_level - sync_tip_level) / -self.rf.DecoderParams["vsync_ire"]
 
-        # exposed here for unit tests
         self.sync_tip_level = sync_tip_level
         self.blanking_level = blanking_level
 
@@ -1607,6 +1607,123 @@ class FieldShared:
     @property
     def compute_linelocs_issues(self):
         return self._compute_linelocs_issues
+    
+    @staticmethod
+    @nb.njit(cache=True, fastmath=True, nogil=True)
+    def _refine_levels_from_vsync_numba(vsync, orig_sync, orig_blank):
+        # --- Tuning Constants ---
+        MIN_YIELD_FRACTION = 0.15
+        MIN_YIELD_SAMPLES = 5
+        MAD_MULTIPLIER = 3.5
+        MAD_EPSILON = 1e-5
+        AMP_MIN_BOUND = 0.5
+        AMP_MAX_BOUND = 1.5
+        SIG_POWER_MIN = 1e-5
+        VAR_MIN = 1e-6
+        MIN_ACCEPTABLE_SNR = 9.0
+        SNR_THRESHOLD = 20.0
+
+        def filter_level_mad(samples, indices):
+            if samples.size <= MIN_YIELD_SAMPLES:
+                return samples, indices
+                
+            med = np.median(samples)
+            abs_dev = np.abs(samples - med)
+            mad = np.median(abs_dev)
+            
+            if mad < MAD_EPSILON:
+                mad = MAD_EPSILON
+                
+            clean_mask = abs_dev < (MAD_MULTIPLIER * mad)
+            return samples[clean_mask], indices[clean_mask]
+
+        total_samples = vsync.size
+        min_yield = max(int(total_samples * MIN_YIELD_FRACTION), MIN_YIELD_SAMPLES)
+        
+        # 1. Hard assignment masks
+        sync_mask = np.abs(vsync - orig_sync) < np.abs(vsync - orig_blank)
+        blank_mask = ~sync_mask
+        indices = np.arange(total_samples)
+        
+        # 2. First pass data cleanup using MAD
+        sync_s, sync_idx = filter_level_mad(vsync[sync_mask], indices[sync_mask])
+        blank_s, blank_idx = filter_level_mad(vsync[blank_mask], indices[blank_mask])
+        
+        refined_sync = orig_sync
+        refined_blank = orig_blank
+        
+        # 3. Validation Gate & SNR Calculation
+        if sync_s.size >= min_yield and blank_s.size >= min_yield:
+            mean_sync = np.mean(sync_s)
+            mean_blank = np.mean(blank_s)
+            
+            measured_amp = mean_blank - mean_sync
+            expected_amp = orig_blank - orig_sync
+            
+            # Verify transient integrity
+            if (AMP_MIN_BOUND * expected_amp) < measured_amp < (AMP_MAX_BOUND * expected_amp):
+                sig_pow = measured_amp ** 2
+                if sig_pow < SIG_POWER_MIN:
+                    sig_pow = SIG_POWER_MIN
+                
+                # Refine Sync Weight
+                sync_var = np.var(sync_s)
+                if sync_var < VAR_MIN: 
+                    sync_var = VAR_MIN
+                
+                sync_snr = sig_pow / sync_var
+                if sync_snr >= MIN_ACCEPTABLE_SNR:
+                    sync_weight = sync_snr / (SNR_THRESHOLD + sync_snr)
+                    refined_sync = ((1.0 - sync_weight) * orig_sync) + (sync_weight * mean_sync)
+                    
+                # Refine Blanking Weight
+                blank_var = np.var(blank_s)
+                if blank_var < VAR_MIN: 
+                    blank_var = VAR_MIN
+                
+                blank_snr = sig_pow / blank_var
+                if blank_snr >= MIN_ACCEPTABLE_SNR:
+                    blank_weight = blank_snr / (SNR_THRESHOLD + blank_snr)
+                    refined_blank = ((1.0 - blank_weight) * orig_blank) + (blank_weight * mean_blank)
+
+        return refined_sync, refined_blank, sync_s, sync_idx, blank_s, blank_idx
+    
+
+    def _refine_levels_from_vsync(self, line0loc, meanlinelen):
+        start = int(round(line0loc + meanlinelen))
+        end = int(round(start + meanlinelen * 8.5))
+        vsync = self.data["video"]["demod"][start:end]
+        
+        orig_sync = self.sync_tip_level
+        orig_blank = self.blanking_level
+
+        (
+            self.sync_tip_level, 
+            self.blanking_level, 
+            sync_s, sync_idx, 
+            blank_s, blank_idx
+        ) = FieldShared._refine_levels_from_vsync_numba(vsync, orig_sync, orig_blank)
+
+        if self.rf.debug_plot and self.rf.debug_plot.is_plot_requested("vsync_levels"):
+            plt.figure(figsize=(11, 5))
+            plt.plot(vsync, color='gray', alpha=0.3, label='Raw Signal')
+
+            plt.scatter(sync_idx, sync_s, color='blue', s=2, alpha=0.5, label='Assigned Sync')
+            plt.scatter(blank_idx, blank_s, color='red', s=2, alpha=0.5, label='Assigned Blanking')
+
+            plt.axhline(y=orig_sync, color='blue', linestyle='--', alpha=0.5, label=f'H Sync ({orig_sync:.3f})')
+            plt.axhline(y=self.sync_tip_level, color='cyan', linestyle='-', linewidth=2, label=f'V Sync ({self.sync_tip_level:.3f})')
+            plt.axhline(y=orig_blank, color='red', linestyle='--', alpha=0.5, label=f'H Blanking ({orig_blank:.3f})')
+            plt.axhline(y=self.blanking_level, color='magenta', linestyle='-', linewidth=2, label=f'V Blanking ({self.blanking_level:.3f})')
+
+            plt.title("Vertical Sync Level Adjustment")
+            plt.xlabel("Sample")
+            plt.ylabel("Amplitude")
+            plt.legend(loc='upper right')
+            plt.grid(True, alpha=0.2)
+            plt.tight_layout()
+            plt.show()
+
 
     def compute_linelocs(self):
         do_level_detect = (
@@ -1690,6 +1807,21 @@ class FieldShared:
 
         # ldd.logger.info("line0loc %s %s", int(line0loc), int(self.meanlinelen))
 
+        if self.vblank_next is None:
+            nextfield = linelocs[self.outlinecount - 7]
+        else:
+            nextfield = self.vblank_next - (self.inlinelen * 8)
+        
+        if not self.rf.options.saved_levels:
+            # TODO: make into a user facing option to enable / disable vsync levels
+            self._refine_levels_from_vsync(line0loc, meanlinelen)
+
+            # Apply outputs to decoder parameters
+            if "backporch" in self.rf.options.ire0_adjust:
+                self.rf.DecoderParams["ire0"] = self.sync_tip_level
+            if "hsync" in self.rf.options.ire0_adjust:
+                self.rf.DecoderParams["hz_ire"] = (self.blanking_level - self.sync_tip_level) / -self.rf.DecoderParams["vsync_ire"]
+
         if self.rf.debug_plot and self.rf.debug_plot.is_plot_requested("line_locs"):
             line0loc_plot = -1 if line0loc == None else line0loc
             first_hsync_loc_plot = -1 if first_hsync_loc == None else first_hsync_loc
@@ -1712,11 +1844,6 @@ class FieldShared:
                 vblank_lines=vblank_pulses,
                 extra_lines=[line0loc_plot, first_hsync_loc_plot, vblank_next_plot],
             )
-
-        if self.vblank_next is None:
-            nextfield = linelocs[self.outlinecount - 7]
-        else:
-            nextfield = self.vblank_next - (self.inlinelen * 8)
 
         if np.count_nonzero(lineloc_errs) < 30:
             self.rf.compute_linelocs_issues = False

@@ -398,7 +398,7 @@ def main(args=None, use_gui=False):
             " some of the chroma processing."
         ),
     )
-    plot_options = "demodblock, deemphasis, raw_pulses, line_locs"
+    plot_options = "demodblock, deemphasis, raw_pulses, line_locs, rf_luma, vsync_levels"
     debug_group.add_argument(
         "--dp",
         "--debug_plot",
@@ -414,17 +414,6 @@ def main(args=None, use_gui=False):
         action="store_true",
         default=False,
         help="Disable use of right side of hsync for lineloc detection (old behaviour)",
-    )
-    debug_group.add_argument(
-        "--level_detect_divisor",
-        dest="level_detect_divisor",
-        metavar="value",
-        type=int,
-        default=3,
-        help=(
-            "Use only every nth sample for vsync serration code - may improve speed at"
-            " cost of minor accuracy. Limited to max 10."
-        ),
     )
     debug_group.add_argument(
         "--no_resample",
@@ -648,7 +637,6 @@ def main(args=None, use_gui=False):
     rf_options["cti_width"] = args.cti_width
     rf_options["cafc"] = args.cafc
     rf_options["disable_right_hsync"] = args.disable_right_hsync
-    rf_options["level_detect_divisor"] = args.level_detect_divisor
     rf_options["fallback_vsync"] = args.fallback_vsync
     rf_options["relaxed_line0"] = args.relaxed_line0
     rf_options["field_order_confidence"] = int(max(0, min(100, args.field_order_confidence)))

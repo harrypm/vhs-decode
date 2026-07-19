@@ -965,23 +965,6 @@ class VHSRFDecode(ldd.RFDecode):
         # making it through.
         self.blockcut_end = 1024
 
-        level_detect_divisor = rf_options.get("level_detect_divisor", 1)
-
-        if level_detect_divisor < 1 or level_detect_divisor > 10:
-            ldd.logger.warning(
-                "Invalid level detect divisor value %s, using default.",
-                level_detect_divisor,
-            )
-            level_detect_divisor = 1
-        elif inputfreq / level_detect_divisor < 4:
-            ldd.logger.warning(
-                "Level detect divisor too high (%s) for input frequency (%s) mhz. Limiting to %s",
-                level_detect_divisor,
-                inputfreq,
-                int(inputfreq // 4),
-            )
-            level_detect_divisor = int(inputfreq // 4)
-
         if self._chroma_trap:
             self.chromaTrap = ChromaSepClass(
                 self.freq_hz, self.SysParams["fsc_mhz"], ldd.logger

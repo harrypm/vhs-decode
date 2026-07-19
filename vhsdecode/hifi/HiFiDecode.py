@@ -69,20 +69,6 @@ DEMOD_DTYPE_NB = numba.types.float64
 BLOCKS_PER_SECOND = 2
 
 
-# assembles the current filter design on a pipe-able filter
-class FiltersClass:
-    def __init__(self, iir_b, iir_a, dtype=REAL_DTYPE):
-        self.iir_b, self.iir_a = iir_b.astype(dtype), iir_a.astype(dtype)
-        self.z = lfilter_zi(self.iir_b, self.iir_a)
-
-    def filtfilt(self, data):
-        return filtfilt(self.iir_b, self.iir_a, data)
-
-    def lfilt(self, data):
-        output, self.z = lfilter(self.iir_b, self.iir_a, data, zi=self.z)
-        return output
-
-
 @dataclass
 class AFEParamsVHS:
     def __init__(self):

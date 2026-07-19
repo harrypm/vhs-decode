@@ -17,7 +17,7 @@ class VideoEQ:
 
         self._video_eq_filter = {
             0: FiltersClass(iir_eq_loband[0], iir_eq_loband[1], freq_hz),
-            # 1: utils.FiltersClass(iir_eq_hiband[0], iir_eq_hiband[1], freq_hz),
+            # 1: FiltersClass(iir_eq_hiband[0], iir_eq_hiband[1], freq_hz),
         }
 
         self._gain = decoder_params["video_eq"]["loband"]["order_limit"]

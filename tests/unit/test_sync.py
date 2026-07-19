@@ -12,7 +12,6 @@ from vhsdecode.field import FieldPALVHS
 def pal_rfdecoder():
     ldd.logger = logging.getLogger("test")
     ldd.logger.setLevel(5)
-    rf_options = {"level_detect_divisor": 2}
     return process.VHSRFDecode(
         inputfreq=40, system="PAL", tape_format="VHS", rf_options=rf_options
     )
