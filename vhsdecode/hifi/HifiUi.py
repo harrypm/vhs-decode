@@ -214,6 +214,10 @@ class MainUIParameters:
         self.head_switching_interpolation = True
         self.doc = doc_mode_to_ui[DEFAULT_DOC_MODE]
         self.threads: int = cpu_count()
+        # RF input data format override (mirrors the --raw_format CLI flag).
+        # No user-facing control yet; round-tripped from the CLI value so the
+        # GUI decode path preserves the override chosen on the command line.
+        self.input_format_override = None
 
 
 def decode_options_to_ui_parameters(decode_options):
@@ -255,6 +259,7 @@ def decode_options_to_ui_parameters(decode_options):
     values.head_switching_interpolation = decode_options["head_switching_interpolation"]
     values.doc = doc_mode_to_ui[decode_options["doc"]]
     values.threads = decode_options.get("threads", values.threads)
+    values.input_format_override = decode_options.get("input_format_override")
     return values
 
 
@@ -298,6 +303,7 @@ def ui_parameters_to_decode_options(values: MainUIParameters):
         "doc": ui_to_doc_mode[values.doc],
         "mode": ui_to_audio_mode[values.audio_mode],
         "threads": max(1, int(values.threads)),
+        "input_format_override": values.input_format_override,
     }
     return decode_options
 
@@ -1157,6 +1163,9 @@ class HifiUi(QMainWindow):
 
         self.input_file = values.input_file
         self.output_file = values.output_file
+        # preserve the CLI --raw_format override across the setValues/getValues
+        # round-trip (no UI control exists for it yet)
+        self._input_format_override = values.input_format_override
 
     def getValues(self) -> MainUIParameters:
         values = MainUIParameters()
@@ -1209,6 +1218,7 @@ class HifiUi(QMainWindow):
         values.input_file = self.input_file
         values.output_file = self.output_file
         values.threads = self.threads_spinbox.value()
+        values.input_format_override = getattr(self, "_input_format_override", None)
         return values
 
     def update_afe_values(

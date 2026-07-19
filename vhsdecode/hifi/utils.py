@@ -83,10 +83,10 @@ def parse_flac_streaminfo(file_path):
 
 
 class NUMA:
-    MPOL_BIND = 2
-    MPOL_MF_MOVE = 2
-    MPOL_MF_STRICT = 1
-    SYS_mbind = 237 # x86_64
+    # Memory binding is performed via libnuma's numa_tonode_memory wrapper,
+    # which issues the correct mbind syscall per architecture. The previous
+    # raw libc.syscall(SYS_mbind=237, ...) was x86_64-only and would invoke
+    # the wrong syscall number on other architectures (e.g. aarch64).
 
     _libnuma = None
     _libc = None
@@ -116,6 +116,20 @@ class NUMA:
                 ctypes.c_size_t,
                 ctypes.c_int,
             ]
+            libnuma.numa_tonode_memory.restype = ctypes.c_int
+
+            # Bitmask API used by bind_process: these return / take
+            # `struct bitmask *` pointers. Without an explicit restype the
+            # default c_int truncates the 64-bit pointer returned by
+            # numa_allocate_nodemask to 32 bits, yielding an invalid pointer
+            # that segfaults when the bitmask helpers dereference it.
+            # (Linux-only: on Windows libnuma is absent so this path is
+            # never reached -- which is why the crash only shows on Linux.)
+            libnuma.numa_allocate_nodemask.restype = ctypes.c_void_p
+            libnuma.numa_bitmask_clearall.argtypes = [ctypes.c_void_p]
+            libnuma.numa_bitmask_setbit.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            libnuma.numa_run_on_node_mask.argtypes = [ctypes.c_void_p]
+            libnuma.numa_bitmask_free.argtypes = [ctypes.c_void_p]
 
             cls._libnuma = libnuma
             return libnuma
@@ -207,12 +221,16 @@ class NUMA:
                 os.sched_setaffinity(0, cpus)
 
             mask = cls._libnuma.numa_allocate_nodemask()
-            cls._libnuma.numa_bitmask_clearall(mask)
-            cls._libnuma.numa_bitmask_setbit(mask, node)
+            try:
+                cls._libnuma.numa_bitmask_clearall(mask)
+                cls._libnuma.numa_bitmask_setbit(mask, node)
 
-            cls._libnuma.numa_run_on_node_mask(mask)
-            cls._libnuma.numa_set_preferred(node)
-            return True
+                cls._libnuma.numa_run_on_node_mask(mask)
+                cls._libnuma.numa_set_preferred(node)
+                return True
+            finally:
+                # avoid leaking a nodemask on every bind_process call
+                cls._libnuma.numa_bitmask_free(mask)
         except Exception:
             return False
 
@@ -233,18 +251,20 @@ class NUMA:
                     ctypes.c_char.from_buffer(buf)
                 )
 
-                nodemask = ctypes.c_ulong(1 << numa_node)
-
-                cls._libc.syscall(
-                    NUMA.SYS_mbind,
+                # Bind this shared-memory range to the NUMA node using
+                # libnuma's numa_tonode_memory wrapper. This is
+                # architecture-portable (libnuma issues the correct mbind
+                # syscall per-arch) -- the previous raw
+                # libc.syscall(SYS_mbind=237, ...) was x86_64-only and
+                # would invoke the wrong syscall number on aarch64/other.
+                cls._libnuma.numa_tonode_memory(
                     ctypes.c_void_p(addr),
-                    ctypes.c_ulong(len(buf)),
-                    NUMA.MPOL_BIND,
-                    ctypes.byref(nodemask),
-                    ctypes.sizeof(nodemask) * 8,
-                    NUMA.MPOL_MF_MOVE | NUMA.MPOL_MF_STRICT,
+                    ctypes.c_size_t(len(buf)),
+                    ctypes.c_int(numa_node),
                 )
 
+                # fault the pages in under the new policy so they are
+                # physically allocated on the bound node
                 for offset in range(0, len(buf), mmap.PAGESIZE):
                     buf[offset] = 0
 
