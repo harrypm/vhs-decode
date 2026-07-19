@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from vhsdecode.hifi.utils import parse_flac_streaminfo
+from vhsdecode.drop_paths import extract_dropped_file_paths
 
 try:
     from PyQt6.QtGui import QIcon
@@ -1833,19 +1834,32 @@ class FileIODialogUI(HifiUi):
             self.auto_detect_format_system_from_filename(text)
 
     def dragEnterEvent(self, event):
-        mime_data = event.mimeData()
-        if mime_data.hasUrls() and any(
-            url.isLocalFile() for url in mime_data.urls()
-        ):
+        paths = extract_dropped_file_paths(event.mimeData())
+        if any(os.path.isfile(p) for p in paths):
             event.acceptProposedAction()
             return
-        event.ignore()
+        if paths:
+            event.ignore()
+            return
+        super().dragEnterEvent(event)
+
+    # dragMoveEvent is required on macOS (Cocoa): without it the move events
+    # default to ignored and the drop target is invalidated mid-drag, so the
+    # cursor shows "no drop" and dropEvent never fires. The decode-launcher
+    # already implements this; the HiFi GUI was missing it, which is why
+    # drag-and-drop onto the HiFi window did not work on macOS.
+    def dragMoveEvent(self, event):
+        paths = extract_dropped_file_paths(event.mimeData())
+        if any(os.path.isfile(p) for p in paths):
+            event.acceptProposedAction()
+            return
+        if paths:
+            event.ignore()
+            return
+        super().dragMoveEvent(event)
 
     def dropEvent(self, event):
-        for url in event.mimeData().urls():
-            if not url.isLocalFile():
-                continue
-            path = url.toLocalFile()
+        for path in extract_dropped_file_paths(event.mimeData()):
             if os.path.isfile(path):
                 self.set_input_file(path)
                 print(f"Input file set by drag and drop: {path}")
