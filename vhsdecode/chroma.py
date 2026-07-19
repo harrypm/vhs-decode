@@ -1897,9 +1897,6 @@ def chroma_transient_improvement(
     
     # Noise threshold scaled with the size of the window footprint
     mad_threshold = base_noise_floor * (cti_width ** 0.5)
-    
-    # Pre-calculate inversion constants for the mixing logic
-    inv_cti_mix = 1.0 - cti_mix
 
     # Allocate a local line-buffered cache for the neighborhood to allow in-place modification
     cache_size = 2 * sweep_radius + 2
@@ -1962,23 +1959,20 @@ def chroma_transient_improvement(
                 else:
                     accelerated_progress = 1.0 - 2.0 * ((1.0 - norm_progress) ** 2)
 
-                # Mix the original linear trace with the accelerated sigmoidal curve
-                final_progress = norm_progress * inv_cti_mix + cti_mix * accelerated_progress
-                
                 # Symmetrically interpolate the new position relative to the appropriate window boundary
-                if final_progress < 0.5:
+                if accelerated_progress < 0.5:
                     # Before the transition center: sharpen transition entry relative to the past state
-                    # Scale factor maps the 0.0-0.5 range to a 0.0-1.0 interpolation weight
-                    t = final_progress * 2.0
-                    i_accelerated = i_past + t * (i_curr - i_past)
+                    t = accelerated_progress * 2.0
+                    i_target = i_past + t * (i_curr - i_past)
                 else:
                     # After the transition center: sharpen transition exit relative to the future state
-                    # Scale factor maps the 0.5-1.0 range to a 0.0-1.0 interpolation weight
-                    t = (final_progress - 0.5) * 2.0
-                    i_accelerated = i_curr + t * (i_future - i_curr)
+                    t = (accelerated_progress - 0.5) * 2.0
+                    i_target = i_curr + t * (i_future - i_curr)
+
+                i_final = i_curr + cti_mix * (i_target - i_curr)
                 
                 # Re-insert the sharpened component directly into the original carrier waveform array
-                chroma_data[idx] = i_accelerated
+                chroma_data[idx] = i_final
 
             # --- Shift the Sliding Window Cache Left ---
             for c in range(cache_size - 1):
