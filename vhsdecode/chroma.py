@@ -29,66 +29,76 @@ def chroma_to_u16(chroma):
 @njit(cache=False, nogil=True, fastmath=True)
 def chroma_automatic_gain(chroma, burst_abs_ref, phase_sequence, burst_detected_line, smoothing_window=8, k=2.0):
     burst_count = len(phase_sequence)
-    raw_gains = np.zeros(burst_count, dtype=np.float64)
 
-    # extract gain values
-    valid_gains_list = []
+    raw_gains = np.empty(burst_count, dtype=np.float64)
+    valid_gains = np.empty(burst_count, dtype=np.float64)
+    valid_amps = np.empty(burst_count, dtype=np.float64)
+    valid_count = 0
+
+    # extract gain values and track valid amplitudes
     for i in range(burst_count):
         current_burst = phase_sequence[i]
-        curr_amp = current_burst.amplitude if current_burst.amplitude != 0 else 1e-8
-        raw_gains[i] = burst_abs_ref / curr_amp
-        
-        if current_burst.line_number >= burst_detected_line:
-            valid_gains_list.append(raw_gains[i])
+        current_amp = current_burst.amplitude if current_burst.amplitude != 0 else 1e-8
 
-    # calculate MAD
-    if len(valid_gains_list) > 0:
-        valid_gains = np.array(valid_gains_list)
-        median_gain = np.median(valid_gains)
-        mad_gain = np.median(np.abs(valid_gains - median_gain))
+        raw_gain = burst_abs_ref / current_amp
+        raw_gains[i] = raw_gain
+
+        if current_burst.line_number >= burst_detected_line:
+            valid_gains[valid_count] = raw_gain
+            valid_amps[valid_count] = current_amp
+            valid_count += 1
+
+    # calculate MAD threshold for gain adjustment
+    if valid_count > 0:
+        active_gains = valid_gains[:valid_count]
+        median_gain = np.median(active_gains)
+        mad_gain = np.median(np.abs(active_gains - median_gain))
         max_allowable_gain = median_gain + (k * mad_gain)
     else:
         max_allowable_gain = 1.0
 
+    # clamp gains
+    clamped_gains = np.minimum(raw_gains, max_allowable_gain)
+
     # calculate smoothing
-    smoothed_gains = np.zeros(burst_count, dtype=np.float64)
+    smoothed_gains = np.empty(burst_count, dtype=np.float64)
     half_w = smoothing_window // 2
     for i in range(burst_count):
-        # Apply moving average directly to the clamped values
         start = max(0, i - half_w)
         end = min(burst_count, i + half_w + 1)
-        
-        window_sum = 0.0
-        for w in range(start, end):
-            window_sum += min(raw_gains[w], max_allowable_gain)
-        smoothed_gains[i] = window_sum / (end - start)
+        smoothed_gains[i] = np.sum(clamped_gains[start:end]) / (end - start)
 
     # apply gain
     for i in range(burst_count):
         current_burst = phase_sequence[i]
         current_burst_start = current_burst.start
-        next_burst_start = phase_sequence[i + 1].start if i < burst_count - 1 else len(chroma)
+
+        if i < burst_count - 1:
+            next_burst_start = phase_sequence[i + 1].start
+        else:
+            next_burst_start = len(chroma)
 
         if current_burst.line_number < burst_detected_line:
-            chroma[current_burst_start:next_burst_start] = 0
+            chroma[current_burst_start:next_burst_start] = 0.0
         else:
             gain_start = smoothed_gains[i]
-            gain_end = smoothed_gains[i + 1] if i < burst_count - 1 else smoothed_gains[i]
-            gain_increment = (gain_end - gain_start) / (next_burst_start - current_burst_start)
-            gain = gain_start
+            if i < burst_count - 1:
+                gain_end = smoothed_gains[i + 1] 
+            else:
+                gain_end = smoothed_gains[i]
 
-            for j in range(current_burst_start, next_burst_start):
-                chroma[j] = chroma[j] * gain
-                gain += gain_increment
+            length = next_burst_start - current_burst_start
+            if length > 0:
+                gain_increment = (gain_end - gain_start) / length
+                gain = gain_start
 
-    # calculate RMS
-    if len(valid_gains_list) > 0:
-        sq_sum = 0.0
-        for g in valid_gains_list:
-            # Reconstruct original amplitude from valid gains to calculate signal RMS
-            amp = burst_abs_ref / g
-            sq_sum += amp * amp
-        return np.sqrt(sq_sum / len(valid_gains_list))
+                for j in range(current_burst_start, next_burst_start):
+                    chroma[j] = chroma[j] * gain
+                    gain += gain_increment
+
+    # return mean of means
+    if valid_count > 0:
+        return np.mean(valid_amps[:valid_count])
 
     return 0.0
 
