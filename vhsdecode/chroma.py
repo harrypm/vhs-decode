@@ -27,7 +27,15 @@ def chroma_to_u16(chroma):
     return out
 
 @njit(cache=False, nogil=True, fastmath=True)
-def chroma_automatic_gain(chroma, burst_abs_ref, phase_sequence, burst_detected_line, smoothing_window=8, k=2.0):
+def chroma_automatic_gain(
+    chroma,
+    burst_abs_ref,
+    phase_sequence,
+    burst_detected_line,
+    sync_tip_len,
+    smoothing_window=8,
+    k=2.0
+):
     burst_count = len(phase_sequence)
 
     raw_gains = np.empty(burst_count, dtype=np.float64)
@@ -68,7 +76,9 @@ def chroma_automatic_gain(chroma, burst_abs_ref, phase_sequence, burst_detected_
         end = min(burst_count, i + half_w + 1)
         smoothed_gains[i] = np.sum(clamped_gains[start:end]) / (end - start)
 
-    # apply gain
+    # apply gain, calculate noise floor
+    noise_sum = 0
+    noise_samples = 0
     for i in range(burst_count):
         current_burst = phase_sequence[i]
         current_burst_start = current_burst.start
@@ -92,15 +102,31 @@ def chroma_automatic_gain(chroma, burst_abs_ref, phase_sequence, burst_detected_
                 gain_increment = (gain_end - gain_start) / length
                 gain = gain_start
 
+                # apply gain
                 for j in range(current_burst_start, next_burst_start):
                     chroma[j] = chroma[j] * gain
                     gain += gain_increment
 
+                # get noise floor of sync tip area in the chroma channel
+                sync_tip = chroma[next_burst_start + 4 - sync_tip_len : next_burst_start - 4]
+
+                # MAD
+                med = np.median(sync_tip)
+                abs_dev = np.abs(sync_tip - med)
+                mad = np.median(abs_dev)
+
+                # Accumulate the noise floor
+                noise_sum += mad * 1.4826
+                noise_samples += 1
+            
+    # Calculate the average noise floor for the entire processed region
+    noise_floor = noise_sum / noise_samples if noise_samples > 0 else 0.0
+
     # return mean of means
     if valid_count > 0:
-        return np.mean(valid_amps[:valid_count])
+        return np.mean(valid_amps[:valid_count]), noise_floor
 
-    return 0.0
+    return 0.0, noise_floor
 
 
 @njit(cache=True, nogil=True)
@@ -1863,12 +1889,13 @@ def process_chroma(
         else:
             uphet = comb_c_pal(uphet, outwidth)
 
-    # Final automatic chroma gain.
-    mean_rms = chroma_automatic_gain(
+    # Chroma AGC
+    mean_rms, chroma_noise_floor = chroma_automatic_gain(
         uphet,
         field.rf.SysParams["burst_abs_ref"],
         field.phase_sequence,
-        field.burst_detected_line
+        field.burst_detected_line,
+        math.floor(field.usectooutpx(field.rf.SysParams["hsyncPulseUS"]))
     )
 
     field.rf.field_averages.chroma_level.push(mean_rms)
@@ -1878,6 +1905,7 @@ def process_chroma(
             uphet,
             lineoffset * outwidth,
             outwidth,
+            chroma_noise_floor,
             field.rf.options.cti_width,
             field.rf.options.cti_mix,
         )
@@ -1890,9 +1918,9 @@ def chroma_transient_improvement(
     chroma_data: np.ndarray,
     line_start: int,
     line_length: int,
+    base_noise_floor: float,
     cti_width: int,
     cti_mix: float,
-    base_noise_floor: float = 0.02,
 ) -> np.ndarray:
     """
     Accelerates the sweep rate between color states without warping phase.
