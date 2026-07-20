@@ -166,6 +166,52 @@ class AFEParamsPAL8mm(AFEParams8mm):
         self.Hfreq = 15.625e3
 
 
+# *********************
+# Betamax HiFi AFE parameters
+# *********************
+# Carriers per PALsite Betamax format page / SL-HF950 spec and Wikipedia
+# Sony_Betamax (NTSC 4-carrier, head-multiplexed). Per-carrier peak deviation
+# is set to 75 kHz: PALsite's "500 kHz deviation" is the total 4-carrier NTSC
+# stack bandwidth (1.38->1.83 MHz ~ 450 kHz), not per-carrier peak deviation;
+# 75 kHz is consistent with the 300 kHz L-R spacing on each head (analogous to
+# VHS's 150 kHz deviation with 400 kHz L-R spacing). Notch padding reuses the
+# VHS value as a starting point - needs tuning against a real Beta HiFi sample.
+@dataclass
+class AFEParamsBetamaxPAL(AFEParamsVHS):
+    def __init__(self):
+        super().__init__()
+        # PAL Beta HiFi: depth-multiplexed, 2 carriers on dedicated audio heads.
+        # L=1.44 MHz, R=2.10 MHz (single-source PALsite figure - needs sample
+        # verification).
+        self.LCarrierRef = 1.44e6
+        self.RCarrierRef = 2.10e6
+        self.LCarrierDeviation = 75e3
+        self.RCarrierDeviation = 75e3
+        self.LNotchWidth = 2 * (self.LCarrierDeviation + 35.753125e3)
+        self.RNotchWidth = 2 * (self.RCarrierDeviation + 35.753125e3)
+        self.Hfreq = 15.625e3
+
+
+@dataclass
+class AFEParamsBetamaxNTSC(AFEParamsVHS):
+    def __init__(self):
+        super().__init__()
+        # NTSC Beta HiFi uses 4 carriers (two per video head, time-multiplexed):
+        #   Head A: L=1.38 MHz, R=1.68 MHz
+        #   Head B: L=1.53 MHz, R=1.83 MHz
+        # Phase 1 fallback: single-pair head-A approximation. This only
+        # correctly decodes head-A fields; head-B fields will be mistuned.
+        # Phase 2 upgrades this to dual per-head pipelines with head-switch
+        # selection. Requires a real NTSC Beta HiFi sample to validate.
+        self.LCarrierRef = 1.38e6
+        self.RCarrierRef = 1.68e6
+        self.LCarrierDeviation = 75e3
+        self.RCarrierDeviation = 75e3
+        self.LNotchWidth = 2 * (self.LCarrierDeviation + 35.753125e3)
+        self.RNotchWidth = 2 * (self.RCarrierDeviation + 35.753125e3)
+        self.Hfreq = 15.750e3
+
+
 @staticmethod
 def get_standard(
     format, system, afe_left_carrier_deviation, afe_right_carrier_deviation, afe_left_carrier, afe_right_carrier
@@ -184,6 +230,19 @@ def get_standard(
         elif system == "n":
             field_rate = 59.94
             standard = AFEParamsNTSC8mm()
+    elif format == "betamax":
+        if system == "p":
+            field_rate = 50
+            standard = AFEParamsBetamaxPAL()
+        elif system == "n":
+            field_rate = 59.94
+            print(
+                "WARN: NTSC Beta HiFi Phase 1 fallback - using head-A carrier "
+                "pair (1.38/1.68 MHz) only. Head-B fields will be mistuned "
+                "until the per-head switching pipeline is implemented and "
+                "validated on a real NTSC Beta HiFi sample."
+            )
+            standard = AFEParamsBetamaxNTSC()
 
     if afe_left_carrier_deviation != 0:
         standard.LCarrierDeviation = afe_left_carrier_deviation
@@ -1545,7 +1604,7 @@ class HiFiDecode:
                     min(newLC, self.standard_original.LCarrierRef + 10e3),
                     self.standard_original.LCarrierRef - 10e3,
                 )
-                if self.options["format"] == "vhs"
+                if self.options["format"] in ("vhs", "betamax")
                 else newLC
             )
 
@@ -1555,7 +1614,7 @@ class HiFiDecode:
                     min(newRC, self.standard_original.RCarrierRef + 10e3),
                     self.standard_original.RCarrierRef - 10e3,
                 )
-                if self.options["format"] == "vhs"
+                if self.options["format"] in ("vhs", "betamax")
                 else newRC
             )
 

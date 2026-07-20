@@ -71,6 +71,20 @@ from vhsdecode.hifi.constants import (
     DEFAULT_8MM_EXPANDER_WEIGHTING_TAU_2,
     DEFAULT_8MM_NR_DEEMPHASIS_TAU_1,
     DEFAULT_8MM_NR_DEEMPHASIS_TAU_2,
+    DEFAULT_BETAMAX_AUDIO_MODE,
+    DEFAULT_BETAMAX_DEEMPHASIS_TAU_1,
+    DEFAULT_BETAMAX_DEEMPHASIS_TAU_2,
+    DEFAULT_BETAMAX_EXPANDER_ATTACK_TAU,
+    DEFAULT_BETAMAX_EXPANDER_GAIN,
+    DEFAULT_BETAMAX_EXPANDER_HOLD_TAU,
+    DEFAULT_BETAMAX_EXPANDER_RATIO,
+    DEFAULT_BETAMAX_EXPANDER_RELEASE_TAU,
+    DEFAULT_BETAMAX_EXPANDER_WEIGHTING_LOW_PASS,
+    DEFAULT_BETAMAX_EXPANDER_WEIGHTING_LOW_PASS_TRANSITION,
+    DEFAULT_BETAMAX_EXPANDER_WEIGHTING_TAU_1,
+    DEFAULT_BETAMAX_EXPANDER_WEIGHTING_TAU_2,
+    DEFAULT_BETAMAX_NR_DEEMPHASIS_TAU_1,
+    DEFAULT_BETAMAX_NR_DEEMPHASIS_TAU_2,
     DEFAULT_DEMOD,
     DEFAULT_DOC_MODE,
     DEFAULT_RESAMPLER_QUALITY,
@@ -263,7 +277,11 @@ def ui_parameters_to_decode_options(values: MainUIParameters):
     decode_options = {
         "input_rate": float(values.input_sample_rate) * 1e6,
         "standard": "p" if values.standard == "PAL" else "n",
-        "format": "vhs" if values.format == "VHS" else "8mm",
+        "format": (
+            "betamax" if values.format == "Betamax"
+            else "vhs" if values.format in ("VHS", "Betacam")
+            else "8mm"
+        ),
         "demod_type": values.demod_type.lower(),
         "auto_fine_tune": values.automatic_fine_tuning,
         "bias_guess": values.bias_guess,
@@ -651,7 +669,17 @@ class HifiUi(QMainWindow):
         format_layout = QHBoxLayout()
         format_label = QLabel("Format")
         self.format_combo = QComboBox(self)
-        self.format_combo.addItems(["VHS", "Video8/Hi8"])
+        self.format_combo.addItems(["VHS", "Video8/Hi8", "Betamax", "Betacam"])
+        self.format_combo.setToolTip(
+            "Tape format.\n"
+            "VHS / SVHS: VHS HiFi AFM stereo profile.\n"
+            "Video8/Hi8: 8mm AFM audio profile.\n"
+            "Betamax: Beta HiFi profile. PAL uses a dedicated 2-carrier profile "
+            "(1.44/2.10 MHz). NTSC currently uses a Phase 1 head-A carrier fallback "
+            "(head-B fields mistuned) until per-head switching is implemented.\n"
+            "Betacam: placeholder - uses the VHS decode profile until a dedicated "
+            "Betacam profile is available."
+        )
         format_layout.addWidget(format_label)
         format_layout.addWidget(self.format_combo)
         self.format_combo.currentIndexChanged.connect(self.on_format_change)
@@ -1226,7 +1254,11 @@ class HifiUi(QMainWindow):
         afe_right_carrier=0,
     ):
         standard, _ = get_standard(
-            "vhs" if format == "VHS" else "8mm",
+            (
+                "betamax" if format == "Betamax"
+                else "vhs" if format in ("VHS", "Betacam")
+                else "8mm"
+            ),
             "p" if standard == "PAL" else "n",
             afe_left_carrier_deviation,
             afe_right_carrier_deviation,
@@ -1239,7 +1271,26 @@ class HifiUi(QMainWindow):
         self.afe_right_carrier_spinbox.setValue(int(standard.RCarrierRef))
 
     def update_deemphasis_expander_values(self, format):
-        if format == "VHS":
+        if format == "Betamax":
+            # Beta HiFi NR taus (VHS-derived approximation - see constants.py;
+            # real Beta HiFi companding-NR constants are not available, tune
+            # against a real Beta HiFi RF sample)
+            self.deemphasis_low_tau_dial_control.setValue(DEFAULT_BETAMAX_DEEMPHASIS_TAU_1)
+            self.deemphasis_high_tau_dial_control.setValue(DEFAULT_BETAMAX_DEEMPHASIS_TAU_2)
+            self.nr_deemphasis_low_tau_dial_control.setValue(DEFAULT_BETAMAX_NR_DEEMPHASIS_TAU_1)
+            self.nr_deemphasis_high_tau_dial_control.setValue(DEFAULT_BETAMAX_NR_DEEMPHASIS_TAU_2)
+            self.expander_gain_dial_control.setValue(DEFAULT_BETAMAX_EXPANDER_GAIN)
+            self.expander_ratio_dial_control.setValue(DEFAULT_BETAMAX_EXPANDER_RATIO)
+            self.expander_attack_tau_dial_control.setValue(DEFAULT_BETAMAX_EXPANDER_ATTACK_TAU)
+            self.expander_hold_tau_dial_control.setValue(DEFAULT_BETAMAX_EXPANDER_HOLD_TAU)
+            self.expander_release_tau_dial_control.setValue(DEFAULT_BETAMAX_EXPANDER_RELEASE_TAU)
+            self.expander_weighting_low_tau_dial_control.setValue(DEFAULT_BETAMAX_EXPANDER_WEIGHTING_TAU_1)
+            self.expander_weighting_high_tau_dial_control.setValue(DEFAULT_BETAMAX_EXPANDER_WEIGHTING_TAU_2)
+            self.expander_weighting_low_pass_dial_control.setValue(DEFAULT_BETAMAX_EXPANDER_WEIGHTING_LOW_PASS)
+            self.expander_weighting_low_pass_transition_dial_control.setValue(DEFAULT_BETAMAX_EXPANDER_WEIGHTING_LOW_PASS_TRANSITION)
+            self.audio_mode_combo.setCurrentText(audio_mode_to_ui[DEFAULT_BETAMAX_AUDIO_MODE])
+        elif format in ("VHS", "Betacam"):
+            # VHS profile (Betacam placeholder reuses the VHS profile)
             self.deemphasis_low_tau_dial_control.setValue(DEFAULT_VHS_DEEMPHASIS_TAU_1)
             self.deemphasis_high_tau_dial_control.setValue(DEFAULT_VHS_DEEMPHASIS_TAU_2)
             self.nr_deemphasis_low_tau_dial_control.setValue(DEFAULT_VHS_NR_DEEMPHASIS_TAU_1)
@@ -1277,11 +1328,31 @@ class HifiUi(QMainWindow):
         )
 
     def on_format_change(self):
+        current_format = self.format_combo.currentText()
         self.update_afe_values(
-            format=self.format_combo.currentText(),
+            format=current_format,
             standard=self.standard_combo.currentText(),
         )
-        self.update_deemphasis_expander_values(self.format_combo.currentText())
+        self.update_deemphasis_expander_values(current_format)
+        self._warn_if_placeholder_format(current_format)
+
+    PLACEHOLDER_FORMATS = ("Betacam",)
+
+    def _warn_if_placeholder_format(self, current_format: str) -> None:
+        if current_format in self.PLACEHOLDER_FORMATS:
+            print(
+                f"{current_format}: using the VHS decode profile as a placeholder "
+                "until a dedicated profile is available."
+            )
+            QMessageBox.warning(
+                self,
+                "Placeholder format",
+                f"{current_format}: Place Holder - Format yet to be implemented.\n\n"
+                "Decoding will use the VHS profile as a stand-in.",
+            )
+
+    def _is_placeholder_format_selected(self) -> bool:
+        return self.format_combo.currentText() in self.PLACEHOLDER_FORMATS
 
     def change_button_color(self, button, color):
         button.setStyleSheet(
@@ -1340,6 +1411,8 @@ class HifiUi(QMainWindow):
 
     def on_play_clicked(self):
         print("[PLAY] Play command issued.")
+        if self._is_placeholder_format_selected():
+            self._warn_if_placeholder_format(self.format_combo.currentText())
         if self.confirm_overwrite():
             return
 
@@ -1352,6 +1425,8 @@ class HifiUi(QMainWindow):
 
     def on_preview_clicked(self):
         print("[PREVIEW] Preview command issued.")
+        if self._is_placeholder_format_selected():
+            self._warn_if_placeholder_format(self.format_combo.currentText())
         if self.confirm_overwrite():
             return
 

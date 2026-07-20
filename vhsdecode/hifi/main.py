@@ -79,6 +79,20 @@ from vhsdecode.hifi.constants import (
     DEFAULT_8MM_EXPANDER_WEIGHTING_TAU_2,
     DEFAULT_8MM_NR_DEEMPHASIS_TAU_1,
     DEFAULT_8MM_NR_DEEMPHASIS_TAU_2,
+    DEFAULT_BETAMAX_AUDIO_MODE,
+    DEFAULT_BETAMAX_DEEMPHASIS_TAU_1,
+    DEFAULT_BETAMAX_DEEMPHASIS_TAU_2,
+    DEFAULT_BETAMAX_EXPANDER_ATTACK_TAU,
+    DEFAULT_BETAMAX_EXPANDER_GAIN,
+    DEFAULT_BETAMAX_EXPANDER_HOLD_TAU,
+    DEFAULT_BETAMAX_EXPANDER_RATIO,
+    DEFAULT_BETAMAX_EXPANDER_RELEASE_TAU,
+    DEFAULT_BETAMAX_EXPANDER_WEIGHTING_LOW_PASS,
+    DEFAULT_BETAMAX_EXPANDER_WEIGHTING_LOW_PASS_TRANSITION,
+    DEFAULT_BETAMAX_EXPANDER_WEIGHTING_TAU_1,
+    DEFAULT_BETAMAX_EXPANDER_WEIGHTING_TAU_2,
+    DEFAULT_BETAMAX_NR_DEEMPHASIS_TAU_1,
+    DEFAULT_BETAMAX_NR_DEEMPHASIS_TAU_2,
     DEFAULT_DEMOD,
     DEFAULT_DOC_MODE,
     DEFAULT_FINAL_AUDIO_RATE,
@@ -291,6 +305,13 @@ system_options_group.add_argument(
     action="store_true",
     default=False,
     help="Use settings for Video8 and Hi8 tape formats.",
+)
+system_options_group.add_argument(
+    "--betamax",
+    dest="format_betamax",
+    action="store_true",
+    default=False,
+    help="Use settings for Betamax HiFi audio. PAL Beta HiFi uses a dedicated 2-carrier profile; NTSC currently uses a Phase 1 head-A carrier fallback (head-B fields mistuned) until per-head switching is implemented.",
 )
 
 demod_options = parser.add_argument_group("Demodulation options")
@@ -1787,9 +1808,12 @@ def build_decode_options_from_args(args):
 
     # 8mm AFM uses a mono channel, or L-R/L+R rather than L/R channels
     # The spec defines a dual audio mode but not sure if it was ever used.
-    default_mode = (
-        DEFAULT_VHS_AUDIO_MODE if not args.format_8mm else DEFAULT_8MM_AUDIO_MODE
-    )
+    if args.format_betamax:
+        default_mode = DEFAULT_BETAMAX_AUDIO_MODE
+    elif args.format_8mm:
+        default_mode = DEFAULT_8MM_AUDIO_MODE
+    else:
+        default_mode = DEFAULT_VHS_AUDIO_MODE
 
     real_mode = default_mode if not args.mode else args.mode
 
@@ -1804,7 +1828,27 @@ def build_decode_options_from_args(args):
 
     default_expander_env_detection = DEFAULT_ENV_DETECTION
 
-    if args.format_8mm:
+    if args.format_betamax:
+        tape_format = "betamax"
+        default_expander_gain = DEFAULT_BETAMAX_EXPANDER_GAIN
+        default_expander_ratio = DEFAULT_BETAMAX_EXPANDER_RATIO
+        default_expander_attack_tau = DEFAULT_BETAMAX_EXPANDER_ATTACK_TAU
+        default_expander_hold_tau = DEFAULT_BETAMAX_EXPANDER_HOLD_TAU
+        default_expander_release_tau = DEFAULT_BETAMAX_EXPANDER_RELEASE_TAU
+
+        default_deemphasis_low_tau = DEFAULT_BETAMAX_DEEMPHASIS_TAU_1
+        default_deemphasis_high_tau = DEFAULT_BETAMAX_DEEMPHASIS_TAU_2
+
+        default_nr_deemphasis_low_tau = DEFAULT_BETAMAX_NR_DEEMPHASIS_TAU_1
+        default_nr_deemphasis_high_tau = DEFAULT_BETAMAX_NR_DEEMPHASIS_TAU_2
+
+        default_expander_weighting_low_tau = DEFAULT_BETAMAX_EXPANDER_WEIGHTING_TAU_1
+        default_expander_weighting_high_tau = DEFAULT_BETAMAX_EXPANDER_WEIGHTING_TAU_2
+        default_expander_weighting_low_pass = DEFAULT_BETAMAX_EXPANDER_WEIGHTING_LOW_PASS
+        default_expander_weighting_low_pass_transition = (
+            DEFAULT_BETAMAX_EXPANDER_WEIGHTING_LOW_PASS_TRANSITION
+        )
+    elif args.format_8mm:
         tape_format = "8mm"
         default_expander_gain = DEFAULT_8MM_EXPANDER_GAIN
         default_expander_ratio = DEFAULT_8MM_EXPANDER_RATIO
@@ -2007,6 +2051,15 @@ def main(argv=None) -> int:
                     print(f"PAL VHS format selected, Audio mode is {real_mode}")
                     if system == "PAL"
                     else print(f"NTSC VHS format selected, Audio mode is {real_mode}")
+                )
+            elif decode_options["format"] == "betamax":
+                (
+                    print(f"PAL Betamax HiFi format selected, Audio mode is {real_mode}")
+                    if system == "PAL"
+                    else print(
+                        f"NTSC Betamax HiFi format selected (Phase 1 head-A fallback), "
+                        f"Audio mode is {real_mode}"
+                    )
                 )
             else:
                 if system == "PAL":
