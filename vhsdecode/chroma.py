@@ -1885,101 +1885,85 @@ def chroma_transient_improvement(
     base_noise_floor: float = 0.02,
 ) -> np.ndarray:
     """
-    Accelerates the sweep rate between color states without warping phase angles.
-    Operates symmetrically by measuring both forward and backward vector neighbors 
-    simultaneously to center and sharpen transition boundaries.
+    Accelerates the sweep rate between color states without warping phase.
+    Operates symmetrically by measuring forward/backward vector neighbors simultaneously.
     """
+    # Configure geometric multi-pass decay
+    decay = 0.25
+    num_passes = 4
+
+    # Pre-calculate mix factors
+    mix_factors = np.empty(num_passes, dtype=np.float32)
+    for p in range(num_passes):
+        mix_factors[p] = cti_mix * (decay ** p)
+
+    # Establish spatial boundaries
     remaining_samples = chroma_data.shape[0] - line_start
     line_count = remaining_samples // line_length
     
-    # Establish the 4fsc phase-locked sweep radius
+    # Establish the 4fsc phase-locked sweep radius and scaling threshold
     sweep_radius = int(max(4, cti_width * 4))
-    
-    # Noise threshold scaled with the size of the window footprint
-    mad_threshold = base_noise_floor * (cti_width ** 0.5)
+    mad_threshold = base_noise_floor * math.sqrt(cti_width)
 
-    # Allocate a local line-buffered cache for the neighborhood to allow in-place modification
-    cache_size = 2 * sweep_radius + 2
-    local_cache = np.zeros(cache_size, dtype=chroma_data.dtype)
+    # Protect against edge bleeding
+    start_s = sweep_radius + 1
+    end_s = line_length - (sweep_radius + 1)
 
+    line_buffer = np.empty(line_length, dtype=chroma_data.dtype)
+
+    # --- Optimized Vector-Ready Loop ---
     for l in range(line_count):
         curr_line_offset = line_start + (l * line_length)
-        
-        # Outer boundary bounds to protect against edge bleeding
-        start_s = sweep_radius + 1
-        end_s = line_length - (sweep_radius + 1)
-        if end_s <= start_s:
-            continue
 
-        # Prime the local cache with the un-mutated input data for the first window position
-        first_idx = curr_line_offset + start_s - sweep_radius - 1
-        for c in range(cache_size):
-            local_cache[c] = chroma_data[first_idx + c]
+        for p in range(num_passes):
+            current_mix = mix_factors[p]
+            line_buffer[:] = chroma_data[curr_line_offset : curr_line_offset + line_length]
 
-        # Process the video line samples sequentially
-        for s in range(start_s, end_s):
-            idx = curr_line_offset + s
-            
-            # Static sliding cache references mapping directly to the window boundaries
-            c_past = 1
-            c_curr = sweep_radius + 1
-            c_future = cache_size - 1
-            
-            # --- Inline Real-Time Component Extraction ---
-            i_curr = local_cache[c_curr]
-            q_curr = local_cache[c_curr - 1]
-            
-            i_past = local_cache[c_past]
-            q_past = local_cache[c_past - 1]
-            
-            i_future = local_cache[c_future]
-            q_future = local_cache[c_future - 1]
-            
-            # --- Symmetric Neighborhood Vector Measurements ---
-            i_delta_back = i_curr - i_past
-            q_delta_back = q_curr - q_past
-            dist_back = np.sqrt(i_delta_back**2 + q_delta_back**2)
-            
-            i_delta_forw = i_future - i_curr
-            q_delta_forw = q_future - q_curr
-            dist_forw = np.sqrt(i_delta_forw**2 + q_delta_forw**2)
-            
-            total_sweep_distance = dist_back + dist_forw
-            
-            # Noise Gate: Only accelerate active color transitions
-            if total_sweep_distance > mad_threshold:
+            for s in range(start_s, end_s):
+                idx = curr_line_offset + s
+                
+                i_curr = line_buffer[s]
+                q_curr = line_buffer[s - 1]
+                
+                i_past = line_buffer[s - sweep_radius]
+                q_past = line_buffer[s - sweep_radius - 1]
+                
+                i_future = line_buffer[s + sweep_radius]
+                q_future = line_buffer[s + sweep_radius - 1]
+                
+                # Measure vector distances
+                i_delta_back = i_curr - i_past
+                q_delta_back = q_curr - q_past
+                dist_back = math.sqrt(i_delta_back * i_delta_back + q_delta_back * q_delta_back)
+                
+                i_delta_forw = i_future - i_curr
+                q_delta_forw = q_future - q_curr
+                dist_forw = math.sqrt(i_delta_forw * i_delta_forw + q_delta_forw * q_delta_forw)
+                
+                total_sweep_distance = dist_back + dist_forw
+                
+                # Noise Gate
+                gate_mask = 1.0 if total_sweep_distance > mad_threshold else 0.0
+                
+                # Inherent Boundary (Naturally bounds to [0.0, 1.0) because distances are >= 0)
                 norm_progress = dist_back / (total_sweep_distance + 1e-6)
                 
-                if norm_progress < 0.0: norm_progress = 0.0
-                elif norm_progress > 1.0: norm_progress = 1.0
-                
                 # Transform the progress via sigmoidal sweep-acceleration function
-                if norm_progress < 0.5:
-                    accelerated_progress = 2.0 * (norm_progress ** 2)
-                else:
-                    accelerated_progress = 1.0 - 2.0 * ((1.0 - norm_progress) ** 2)
-
-                # Symmetrically interpolate the new position relative to the appropriate window boundary
-                if accelerated_progress < 0.5:
-                    # Before the transition center: sharpen transition entry relative to the past state
-                    t = accelerated_progress * 2.0
-                    i_target = i_past + t * (i_curr - i_past)
-                else:
-                    # After the transition center: sharpen transition exit relative to the future state
-                    t = (accelerated_progress - 0.5) * 2.0
-                    i_target = i_curr + t * (i_future - i_curr)
-
-                i_final = i_curr + cti_mix * (i_target - i_curr)
+                is_lower = norm_progress < 0.5
                 
-                # Re-insert the sharpened component directly into the original carrier waveform array
-                chroma_data[idx] = i_final
-
-            # --- Shift the Sliding Window Cache Left ---
-            for c in range(cache_size - 1):
-                local_cache[c] = local_cache[c + 1]
-
-            if s + 1 < end_s:
-                local_cache[cache_size - 1] = chroma_data[idx + sweep_radius + 1]
+                inv_prog = 1.0 - norm_progress
+                t_low = 4.0 * (norm_progress * norm_progress)
+                t_high = 1.0 - 4.0 * (inv_prog * inv_prog)
+                
+                # Select interpolation weights and anchor to the closer sample (before or after)
+                t = t_low if is_lower else t_high
+                anchor_a = i_past if is_lower else i_curr
+                anchor_b = i_curr if is_lower else i_future
+                
+                # 4. Final vector mix
+                # If gate_mask is 0.0, the delta cancels out and i_curr is cleanly written back
+                i_target = anchor_a + t * (anchor_b - anchor_a)
+                chroma_data[idx] = i_curr + (current_mix * gate_mask) * (i_target - i_curr)
 
 
 def decode_chroma(field, do_chroma_deemphasis=False):
