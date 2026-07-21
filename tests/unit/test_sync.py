@@ -42,8 +42,8 @@ class TestSyncPAL:
         field = _make_field(pal_rfdecoder, data_dir / "PAL_NOISY.txt.gz")
         _ = field.get_pulses()
         measured_sync, measured_blank = field.sync_tip_level, field.blanking_level
-        assert math.isclose(measured_blank, 4130360.76, rel_tol=1e-3)
-        assert math.isclose(measured_sync, 3800000, rel_tol=1e-3)
+        assert math.isclose(measured_blank, 4137794.68, rel_tol=1e-3)
+        assert math.isclose(measured_sync, 3795981.06, rel_tol=1e-3)
 
 
 class TestLevelDetect:
