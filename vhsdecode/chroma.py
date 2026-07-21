@@ -9,6 +9,7 @@ from vhsdecode.rust_utils import sosfiltfilt_rust
 import numba
 from numba import njit
 from numba.experimental import jitclass
+from functools import cache
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -811,7 +812,6 @@ def upconvert_chroma(
 @njit(nogil=True, cache=False, fastmath=False)
 def upconvert_chroma_phase_comp(
     chroma,
-    uphet,
     lineoffset,
     outwidth,
     phase_rotation_sequence,
@@ -876,7 +876,6 @@ def upconvert_chroma_phase_comp(
 
         # Slice target and source arrays to provide direct contiguous memory views
         chroma_slice = chroma[linestart:lineend]
-        uphet_slice = uphet[linestart:lineend]
 
         # No outer dependencies so LLVM can vectorize
         for k in range(outwidth):
@@ -884,7 +883,7 @@ def upconvert_chroma_phase_comp(
             theta_k = theta_0 + alpha * local_idx[k] + beta * (local_idx[k] * local_idx[k])
             
             # Vectorized trigonometric and arithmetic execution
-            uphet_slice[k] = chroma_slice[k] * -np.cos(theta_k) - dc_val
+            chroma_slice[k] = chroma_slice[k] * -np.cos(theta_k) - dc_val
 
 
 @njit(cache=True, nogil=True)
@@ -1000,7 +999,7 @@ def decode_chroma_phase_rotation(
         burstarea,
         field.rf.fsc_wave,
         field.rf.fsc_cos_wave,
-        field.rf.chroma_afc.fsc_mhz * 1e6,
+        field.rf.SysParams['fsc_mhz'] * 1e6,
         detect_chroma_track_phase,
         rotation_check_start_line, # check for track phase rotation around the headswitching area (bottom of field)
         field.rf.options.enable_color_killer,
@@ -1703,6 +1702,85 @@ def _process_chroma_secam_method1(field, chroma, linesout, outwidth, burstarea):
     return uphet
 
 
+@cache
+def _gen_chroma_fft_filter(
+    filter_len: int,
+    fsc: float,
+    color_under_carrier_f: float,
+    bw_lower_hz: float,
+    heterodyne_attenuation_db: float,
+    order: int,
+) -> np.ndarray:
+    """
+    Generate asymmetric Super-Gaussian bandpass mask in the frequency domain.
+    """
+
+    # calculate upper bandwidth limit that is required to remove the heterodyne up conversion product
+    # at the supplied attenuation
+    A = 10.0 ** (-abs(heterodyne_attenuation_db) / 20.0)
+    delta_f = 2.0 * color_under_carrier_f
+    exponent = 1.0 / (2.0 * order)
+    bw_upper_hz = delta_f / ((-np.log(A)) ** exponent)
+
+    freqs_up = sps_fft.rfftfreq(filter_len, d=1.0 / (fsc * 4.0))
+    mask = np.zeros_like(freqs_up, dtype=np.float64)
+
+    lower_idx = freqs_up <= fsc
+    upper_idx = freqs_up > fsc
+
+    # asymmetric Super-Gaussian evaluation around subcarrier (fsc)
+    mask[lower_idx] = np.exp(-((freqs_up[lower_idx] - fsc) / bw_lower_hz) ** (2 * order))
+    mask[upper_idx] = np.exp(-((freqs_up[upper_idx] - fsc) / bw_upper_hz) ** (2 * order))
+
+    return mask
+
+
+def filter_chroma_fft(
+    uphet: np.ndarray, 
+    fsc: float,
+    color_under_carrier_f: float,
+    bw_lower_hz: float,               # Lower chroma bandwidth (1.3 MHz below fsc)
+    heterodyne_attenuation_db: float, # Rejection target at sum product (dB)
+    order: int = 2,                   # filter order
+    pad_samples: int = 256,
+) -> np.ndarray:
+    """
+    Zero-phase FFT bandpass filter using a Super-Gaussian mask.
+    Dynamically computes bw_upper_hz from color_under_carrier_f to guarantee
+    stopband attenuation at the heterodyne sum product.
+    """
+    N_raw = len(uphet)
+
+    # pad to nearest fast FFT length (combines 2, 3, 5, 7 prime factors)
+    min_pad_len = N_raw + 2 * max(1, int(pad_samples))
+    N_up = sps_fft.next_fast_len(min_pad_len)
+
+    # Symmetric pad calculation to center the signal in the fast length array
+    pad_left = (N_up - N_raw) // 2
+    pad_right = N_up - N_raw - pad_left
+
+    x_padded = np.pad(uphet, (pad_left, pad_right), mode='reflect')
+
+    mask = _gen_chroma_fft_filter(
+        N_up,
+        fsc,
+        color_under_carrier_f,
+        bw_lower_hz,
+        heterodyne_attenuation_db,
+        order
+    )
+
+    # apply filter against Forward Real FFT
+    F_filtered = sps_fft.rfft(x_padded)
+    F_filtered *= mask
+
+    # return to real signal
+    chroma_padded = sps_fft.irfft(F_filtered, n=N_up)
+
+    # remove padding
+    return chroma_padded[pad_left : pad_left + N_raw]
+
+
 def process_chroma(
     field,
     disable_deemph=False,
@@ -1714,10 +1792,9 @@ def process_chroma(
     linesout = field.outlinecount
     outwidth = field.outlinelen
 
-    uphet = np.zeros((linesout * outwidth), dtype=np.float32)
     if field.burst_detected_line == -1:
         # skip chroma if the color killer is active for the whole field
-        return uphet
+        return np.zeros((linesout * outwidth), dtype=np.float32)
     
     if (
         not field.rf.options.disable_phase_correction
@@ -1735,8 +1812,8 @@ def process_chroma(
     if field.chroma_tbc_buffer is None:
         # shift the chroma to reverse group delay caused by the color under heterodyne filter
         # this is dependent on color framing, and is disabled if color framing is disabled
-        # TODO: may need tuning / needs validation
-        chroma_subcarrier_delay_cycles = field.rf.chroma_afc.fsc_mhz * 1e6 / (2.0 * np.pi * field.rf.chroma_afc.color_under)
+        # TODO: shift amount may need tuning / needs validation
+        chroma_subcarrier_delay_cycles = field.rf.SysParams['fsc_mhz'] * 1e6 / (2.0 * np.pi * field.rf.DecoderParams["color_under_carrier"])
         chroma_subcarrier_delay_samples = chroma_subcarrier_delay_cycles * 4
         chroma, _, _ = ldd.Field.downscale(field, channel="demod_burst", shift=chroma_subcarrier_delay_samples * chroma_shift_direction)
 
@@ -1775,7 +1852,7 @@ def process_chroma(
                 outwidth,
                 porch_window,
                 field.rf.chroma_afc.true_samp_rate,
-                field.rf.chroma_afc.color_under,
+                field.rf.DecoderParams["color_under_carrier"],
             )
             if carrier_offset is not None:
                 field.rf.secam_servo_avg.push(carrier_offset)
@@ -1818,18 +1895,20 @@ def process_chroma(
         #         (field.isFirstField, line_6_burst_present, (field.field_number // 4) % 2)
         #     ]
 
-        # offset heterodyne for each line to correct color phase
+        # this uses the burst measurements to interpolate the correct phase of the color under heterodyne
+        # phase issues are corrected continiously for each sample using a linear spline interpolated from the burst measurements
+        # the mixing is performed on the upsampled signal to avoid aliasing introduced from the up-heterodyne mixing product
         upconvert_chroma_phase_comp(
-            chroma,
-            uphet,
+            chroma, # modifies this in place
             lineoffset,
             outwidth,
             field.phase_sequence,
-            field.rf.chroma_afc.color_under,
-            field.rf.chroma_afc.fsc_mhz * 1e6,
+            field.rf.DecoderParams["color_under_carrier"],
+            field.rf.SysParams["fsc_mhz"] * 1e6,
             target_phase_even,
-            target_phase_odd
+            target_phase_odd,
         )
+        uphet = chroma
     else:
         if field.rf.chroma_afc.conversion_lo is not None:
             # Explicit conversion LO (ME-SECAM): trim it by the smoothed
@@ -1857,6 +1936,7 @@ def process_chroma(
                 else field.rf.chroma_heterodyne
             )
 
+        uphet = np.zeros((linesout * outwidth), dtype=np.float32)
         upconvert_chroma(
             chroma,
             uphet,
@@ -1870,13 +1950,13 @@ def process_chroma(
     # Mixing the signals will produce waves at the difference and sum of the
     # frequencies. We only want the difference wave which is at the correct color
     # carrier frequency here.
-    # We do however want to be careful to avoid filtering out too much of the sideband.
-    uphet = sosfiltfilt_rust(field.rf.Filters["FChromaFinal"], uphet)
-
-    # FFT filter way to use a supergauss filter to more sharply cut out the upper harmonic
-    # This may be a better approach but slows down things a bit much so not using for now
-    # orig_len = len(uphet)
-    # uphet = np_fft.irfft(np_fft.rfft(uphet) * field.rf.Filters["FChromaFinal"], n=orig_len)
+    uphet = filter_chroma_fft(
+        uphet,
+        field.rf.SysParams["fsc_mhz"] * 1e6,
+        field.rf.DecoderParams["color_under_carrier"],
+        1.3e6, # lower chroma bandwidth (roughly this for PAL / NTSC)
+        80.0   # heterodyne up-mixing attenuation
+    )
 
     if do_chroma_deemphasis:
         b, a = field.rf.Filters["chroma_deemphasis"]
@@ -1984,7 +2064,7 @@ def chroma_transient_improvement(
                 gate_mask = 1.0 if total_sweep_distance > mad_threshold else 0.0
                 
                 # Inherent Boundary (Naturally bounds to [0.0, 1.0) because distances are >= 0)
-                norm_progress = dist_back / (total_sweep_distance + 1e-6)
+                norm_progress = dist_back / total_sweep_distance if total_sweep_distance != 0 else 0
                 
                 # Transform the progress via sigmoidal sweep-acceleration function
                 is_lower = norm_progress < 0.5
