@@ -171,24 +171,41 @@ class AFEParamsPAL8mm(AFEParams8mm):
 # *********************
 # Carriers per PALsite Betamax format page / SL-HF950 spec and Wikipedia
 # Sony_Betamax (NTSC 4-carrier, head-multiplexed). Per-carrier peak deviation
-# is set to 75 kHz: PALsite's "500 kHz deviation" is the total 4-carrier NTSC
-# stack bandwidth (1.38->1.83 MHz ~ 450 kHz), not per-carrier peak deviation;
-# 75 kHz is consistent with the 300 kHz L-R spacing on each head (analogous to
-# VHS's 150 kHz deviation with 400 kHz L-R spacing). Notch padding reuses the
-# VHS value as a starting point - needs tuning against a real Beta HiFi sample.
+# is 500 kHz (PALsite; confirmed by sideband measurement on a real PAL Beta
+# capture). Bandpass half-width is decoupled from deviation and capped to keep
+# L/R separation - see the per-class comments. Values tuned against a real PAL
+# Beta HiFi capture (Sony SL-HF100EC); NTSC values still need a real NTSC
+# Beta HiFi sample to validate.
 @dataclass
 class AFEParamsBetamaxPAL(AFEParamsVHS):
     def __init__(self):
         super().__init__()
         # PAL Beta HiFi: depth-multiplexed, 2 carriers on dedicated audio heads.
-        # L=1.44 MHz, R=2.10 MHz (single-source PALsite figure - needs sample
-        # verification).
-        self.LCarrierRef = 1.44e6
-        self.RCarrierRef = 2.10e6
-        self.LCarrierDeviation = 75e3
-        self.RCarrierDeviation = 75e3
-        self.LNotchWidth = 2 * (self.LCarrierDeviation + 35.753125e3)
-        self.RNotchWidth = 2 * (self.RCarrierDeviation + 35.753125e3)
+        # PALsite nominal L=1.44 MHz, R=2.10 MHz. Measured on a real PAL Beta
+        # capture (Sony SL-HF100EC): carriers actually sit at ~1.448/2.108 MHz
+        # mean and wander +-15 kHz (std 9-12 kHz, p-p ~30 kHz) across fields -
+        # the deck's audio heads run slightly off the nominal center. Set the
+        # profile centers to the measured means so auto_fine_tune (widened to
+        # +-20 kHz for betamax, see _get_afe/auto_fine_tune) can track the
+        # wander without clamping against the +-10 kHz VHS limit.
+        self.LCarrierRef = 1.448e6
+        self.RCarrierRef = 2.108e6
+        # Per-carrier peak deviation 500 kHz per PALsite ("500 kHz compared to
+        # 150 kHz for VHS"). Confirmed by spectral measurement on a real PAL
+        # Beta capture (sidebands extend ~+-520 kHz; the demod must normalise
+        # by 500k or the expander/NR mistracks -> stutter).
+        self.LCarrierDeviation = 500e3
+        self.RCarrierDeviation = 500e3
+        # Bandpass half-width is DECOUPLED from deviation: with 700 kHz L-R
+        # spacing and 500 kHz deviation, a Carson-width bandpass (2*(500k+pad))
+        # would span +-1071 kHz and capture BOTH carriers (no L/R separation).
+        # Set to 340 kHz = measured -6dB sideband half-width on a real PAL Beta
+        # capture (sidebands span +-336 kHz at -6dB). L=1.10-1.78, R=1.76-2.44
+        # gives ~20 kHz overlap (small crosstalk) but passes the live FM sidebands
+        # that the previous 300 kHz cap was clipping (clipping caused demod
+        # loss-of-lock -> stutter on both channels). Needs tune against a sample.
+        self.LNotchWidth = 340e3
+        self.RNotchWidth = 340e3
         self.Hfreq = 15.625e3
 
 
@@ -1598,11 +1615,15 @@ class HiFiDecode:
             )
 
     def _get_afe(self, newLC=None, newRC=None):
+        # Beta HiFi carriers wander +-15 kHz on real decks (measured), so allow
+        # a wider clamp than VHS's +-10 kHz. VHS stays +-10 kHz.
+        is_betamax = self.options["format"] == "betamax"
+        clamp = 20e3 if is_betamax else 10e3
         if newLC:
             self.standard.LCarrierRef = (
                 max(
-                    min(newLC, self.standard_original.LCarrierRef + 10e3),
-                    self.standard_original.LCarrierRef - 10e3,
+                    min(newLC, self.standard_original.LCarrierRef + clamp),
+                    self.standard_original.LCarrierRef - clamp,
                 )
                 if self.options["format"] in ("vhs", "betamax")
                 else newLC
@@ -1611,8 +1632,8 @@ class HiFiDecode:
         if newRC:
             self.standard.RCarrierRef = (
                 max(
-                    min(newRC, self.standard_original.RCarrierRef + 10e3),
-                    self.standard_original.RCarrierRef - 10e3,
+                    min(newRC, self.standard_original.RCarrierRef + clamp),
+                    self.standard_original.RCarrierRef - clamp,
                 )
                 if self.options["format"] in ("vhs", "betamax")
                 else newRC
@@ -1626,15 +1647,19 @@ class HiFiDecode:
     def auto_fine_tune(
         self, dcL: float, dcR: float
     ) -> Tuple[AFEFilterable, AFEFilterable, FMDiscriminator, FMDiscriminator]:
+        # Beta HiFi carriers wander +-15 kHz on real decks (measured), so allow
+        # a wider clamp than VHS's +-10 kHz. VHS stays +-10 kHz.
+        is_betamax = self.options["format"] == "betamax"
+        clamp = 20e3 if is_betamax else 10e3
         if self.audio_process_params.decode_mode != AUDIO_MODE_MONO_R:
             left_carrier_updated = round(self.standard_original.LCarrierRef + dcL * self.standard.LCarrierDeviation)
 
-            self.standard.LCarrierRef = min(max(left_carrier_updated, self.standard_original.LCarrierRef - 10e3), self.standard_original.LCarrierRef + 10e3)
+            self.standard.LCarrierRef = min(max(left_carrier_updated, self.standard_original.LCarrierRef - clamp), self.standard_original.LCarrierRef + clamp)
             
         if self.audio_process_params.decode_mode != AUDIO_MODE_MONO_L:
             right_carrier_updated = round(self.standard_original.RCarrierRef + dcR * self.standard.RCarrierDeviation)
 
-            self.standard.RCarrierRef = min(max(right_carrier_updated, self.standard_original.RCarrierRef - 10e3), self.standard_original.RCarrierRef + 10e3)
+            self.standard.RCarrierRef = min(max(right_carrier_updated, self.standard_original.RCarrierRef - clamp), self.standard_original.RCarrierRef + clamp)
 
         self.afeL, self.afeR = self._get_afe()
         self.fmL, self.fmR = self._get_fm_demod(
