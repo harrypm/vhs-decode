@@ -320,6 +320,28 @@ def main(args=None, use_gui=False):
         help="Detects and corrects color-under heterodyne rotation change around head-switching area. Corrects chroma artifacts around head-switching area for color-under formats. (Experimental feature)",
     )
     chroma_group.add_argument(
+        "--cti_mix",
+        dest="cti_mix",
+        type=float,
+        default=1,
+        help=(
+            "Sets Chroma Transient Improvement amount (color-under only). This is wet/dry mix of the overall effect. Set to 0 to disable. Default is 1. Set to 0 to disable CTI."
+            "\n  Chroma Transient Improvement helps to re-focus edges the up-converted color under. This increases how quickly color can change."
+        ),
+    )
+    chroma_group.add_argument(
+        "--cti_width",
+        dest="cti_width",
+        type=int,
+        default=2,
+        help=(
+            "Sets Chroma Transient Improvement width (color-under only). This controls how sharply to focus the chroma in units of subcarrier cycles. Default is 2."
+            "\n  Since color under has lower bandwidth than the source, some of the hue detail is lost and sharper edges can be recovered with CTI"
+            "\n  * Larger width  -> more edge sharpness, less hue detail."
+            "\n  * Smaller width -> more hue detail, less edge sharpness."
+        ),
+    )
+    chroma_group.add_argument(
         "--dpc",
         "--disable_phase_correction",
         dest="disable_phase_correction",
@@ -376,7 +398,7 @@ def main(args=None, use_gui=False):
             " some of the chroma processing."
         ),
     )
-    plot_options = "demodblock, deemphasis, raw_pulses, line_locs"
+    plot_options = "demodblock, deemphasis, raw_pulses, line_locs, rf_luma, vsync_levels"
     debug_group.add_argument(
         "--dp",
         "--debug_plot",
@@ -392,17 +414,6 @@ def main(args=None, use_gui=False):
         action="store_true",
         default=False,
         help="Disable use of right side of hsync for lineloc detection (old behaviour)",
-    )
-    debug_group.add_argument(
-        "--level_detect_divisor",
-        dest="level_detect_divisor",
-        metavar="value",
-        type=int,
-        default=3,
-        help=(
-            "Use only every nth sample for vsync serration code - may improve speed at"
-            " cost of minor accuracy. Limited to max 10."
-        ),
     )
     debug_group.add_argument(
         "--no_resample",
@@ -622,9 +633,10 @@ def main(args=None, use_gui=False):
     rf_options["nldeemp"] = args.nldeemp
     rf_options["subdeemp"] = args.subdeemp
     rf_options["y_comb"] = args.y_comb
+    rf_options["cti_mix"] = args.cti_mix
+    rf_options["cti_width"] = args.cti_width
     rf_options["cafc"] = args.cafc
     rf_options["disable_right_hsync"] = args.disable_right_hsync
-    rf_options["level_detect_divisor"] = args.level_detect_divisor
     rf_options["fallback_vsync"] = args.fallback_vsync
     rf_options["relaxed_line0"] = args.relaxed_line0
     rf_options["field_order_confidence"] = int(max(0, min(100, args.field_order_confidence)))

@@ -164,7 +164,6 @@ mutation  _export_raw_tbc             "vhs_pal"         --export_raw_tbc
 mutation  _fallback_vsync_ntsc        "svhs_et_ntsc"    --fallback_vsync
 mutation  _fm_audio_notch             "vhs_ntsc"        --fm_audio_notch 10
 mutation  _ire0_adjust                "vhs_ntsc"        --ire0_adjust
-mutation  _level_detect_div5          "svhs_et_ntsc"    --level_detect_divisor 5
 mutation  _nld                        "vhs_ntsc"        --nld
 mutation  _notch_ntsc                 "vhs_ntsc"        --notch 3.58
 mutation  _notch_pal                  "vhs_pal"         --notch 4.43

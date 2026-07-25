@@ -91,10 +91,8 @@ def test_sync(filename, num_pulses=None, blank_approx=None, sync_approx=None):
     ldd.logger.info("test")
 
     # process.VHSDecode("infile", "outfile", ,inputfreq=samplerate_mhz, system="PAL", tape_format="VHS")
-    rf_options = {}
-    rf_options["level_detect_divisor"] = 2
     rfdecoder = process.VHSRFDecode(
-        inputfreq=samplerate_mhz, system="PAL", tape_format="VHS", rf_options=rf_options
+        inputfreq=samplerate_mhz, system="PAL", tape_format="VHS"
     )
 
     demod_05_data = np.loadtxt(filename)
@@ -107,12 +105,13 @@ def test_sync(filename, num_pulses=None, blank_approx=None, sync_approx=None):
 
     field = FieldPALVHS(rfdecoder, data_stub)
 
-    pulses = rfdecoder.resync.get_pulses(field)
+    pulses = field.get_pulses()
 
     if num_pulses:
         assert len(pulses) == num_pulses
 
-    measured_sync, measured_blank = rfdecoder.resync._field_state.pull_levels()
+    measured_sync = field.sync_tip_level
+    measured_blank = field.blanking_level
 
     if blank_approx:
         assert math.isclose(measured_blank, blank_approx)
@@ -120,20 +119,6 @@ def test_sync(filename, num_pulses=None, blank_approx=None, sync_approx=None):
         assert math.isclose(measured_sync, sync_approx)
 
     return True
-
-
-def test_find_pulses(filename, num_pulses):
-    from vhsdecode.addons.resync import _findpulses_numba_raw
-
-    demod_05_data = np.loadtxt(filename)
-
-    # Just using some pre-tested values for now for optimizing function, many need changes later.
-    starts, lengths = _findpulses_numba_raw(demod_05_data, 3954307.8, 11.625, 1588.125)
-
-    assert len(starts) == num_pulses
-    assert len(lengths) == num_pulses
-    assert starts[200] == 495955
-    assert lengths[200] == 177
 
 
 class SyncTest(unittest.TestCase):
@@ -150,9 +135,6 @@ class SyncTest(unittest.TestCase):
         sync = 3800000
         print("pal noisy")
         test_sync("PAL_NOISY.txt.gz", blank_approx=blank, sync_approx=sync)
-
-    def test_find_pulses(self):
-        test_find_pulses("PAL_GOOD.txt.gz", 458)
 
 
 class ZCTest(unittest.TestCase):
@@ -227,10 +209,8 @@ class LevelDetect(unittest.TestCase):
         ldd.logger.info("test")
         demod_05_data = np.loadtxt("PAL_GOOD.txt.gz")
 
-        rf_options = {}
-        rf_options["level_detect_divisor"] = 2
         rfdecoder = process.VHSRFDecode(
-            inputfreq=40, system="PAL", tape_format="VHS", rf_options=rf_options
+            inputfreq=40, system="PAL", tape_format="VHS"
         )
 
         data_stub = {}
@@ -241,11 +221,11 @@ class LevelDetect(unittest.TestCase):
 
         field = FieldPALVHS(rfdecoder, data_stub)
 
-        _ = rfdecoder.resync.get_pulses(field)
-        blank_level = rfdecoder.resync._field_state._blanklevels.current()
-        sync_level = rfdecoder.resync._field_state._synclevels.current()
-        print("blank level: ", blank_level)
+        _ = field.get_pulses(True)
+        sync_level = field.sync_tip_level
+        blank_level = field.blanking_level
         print("sync level: ", sync_level)
+        print("blank level: ", blank_level)
 
 
 if __name__ == "__main__":

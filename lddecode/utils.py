@@ -143,7 +143,7 @@ sinc_phase_count = 2**16
 
 
 @njit(nogil=True, fastmath=True)
-def scale_field(buf, dsout, interpolated_pixel_locs, wowfactors, sinc_lut, lineoffset, outwidth, wow_level_adjust_smoothing = 0, level_adjust_threshold = 15):
+def scale_field(buf, dsout, interpolated_pixel_locs, wowfactors, sinc_lut, lineoffset, outwidth, wow_level_adjust_smoothing = 0, level_adjust_threshold = 15, shift=0.0):
     # average out any unusual spikes in wow that happen on a per line basis
     # this indicates an hsync tbc error vs. being normal wow from playback speed variations
     # in this case for level adjusting we just want to fallback to the average wow to avoid a bright or dark line
@@ -175,7 +175,8 @@ def scale_field(buf, dsout, interpolated_pixel_locs, wowfactors, sinc_lut, lineo
         level_adjust = level_adjusts[i]
 
         # reconstructs the waveform at the proper fractional sample position, undoing wow-induced timing variations
-        coord = np.float32(interpolated_pixel_locs[i])
+        # Adding the positive shift pulls future (late) samples backward into alignment.
+        coord = np.float32(interpolated_pixel_locs[i] + shift)
         coord_int = int(coord)
 
         # fractional phase

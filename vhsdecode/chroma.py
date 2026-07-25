@@ -9,6 +9,7 @@ from vhsdecode.rust_utils import sosfiltfilt_rust
 import numba
 from numba import njit
 from numba.experimental import jitclass
+from functools import cache
 
 
 @njit(cache=True, nogil=True, fastmath=True)
@@ -27,70 +28,106 @@ def chroma_to_u16(chroma):
     return out
 
 @njit(cache=False, nogil=True, fastmath=True)
-def chroma_automatic_gain(chroma, burst_abs_ref, phase_sequence, burst_detected_line, smoothing_window=8, k=2.0):
+def chroma_automatic_gain(
+    chroma,
+    burst_abs_ref,
+    phase_sequence,
+    burst_detected_line,
+    sync_tip_len,
+    smoothing_window=8,
+    k=2.0
+):
     burst_count = len(phase_sequence)
-    raw_gains = np.zeros(burst_count, dtype=np.float64)
 
-    # extract gain values
-    valid_gains_list = []
+    raw_gains = np.empty(burst_count, dtype=np.float64)
+    valid_gains = np.empty(burst_count, dtype=np.float64)
+    valid_amps = np.empty(burst_count, dtype=np.float64)
+    valid_count = 0
+
+    # extract gain values and track valid amplitudes
     for i in range(burst_count):
         current_burst = phase_sequence[i]
-        curr_amp = current_burst.amplitude if current_burst.amplitude != 0 else 1e-8
-        raw_gains[i] = burst_abs_ref / curr_amp
-        
-        if current_burst.line_number >= burst_detected_line:
-            valid_gains_list.append(raw_gains[i])
+        current_amp = current_burst.amplitude if current_burst.amplitude != 0 else 1e-8
 
-    # calculate MAD
-    if len(valid_gains_list) > 0:
-        valid_gains = np.array(valid_gains_list)
-        median_gain = np.median(valid_gains)
-        mad_gain = np.median(np.abs(valid_gains - median_gain))
+        raw_gain = burst_abs_ref / current_amp
+        raw_gains[i] = raw_gain
+
+        if current_burst.line_number >= burst_detected_line:
+            valid_gains[valid_count] = raw_gain
+            valid_amps[valid_count] = current_amp
+            valid_count += 1
+
+    # calculate MAD threshold for gain adjustment
+    if valid_count > 0:
+        active_gains = valid_gains[:valid_count]
+        median_gain = np.median(active_gains)
+        mad_gain = np.median(np.abs(active_gains - median_gain))
         max_allowable_gain = median_gain + (k * mad_gain)
     else:
         max_allowable_gain = 1.0
 
+    # clamp gains
+    clamped_gains = np.minimum(raw_gains, max_allowable_gain)
+
     # calculate smoothing
-    smoothed_gains = np.zeros(burst_count, dtype=np.float64)
+    smoothed_gains = np.empty(burst_count, dtype=np.float64)
     half_w = smoothing_window // 2
     for i in range(burst_count):
-        # Apply moving average directly to the clamped values
         start = max(0, i - half_w)
         end = min(burst_count, i + half_w + 1)
-        
-        window_sum = 0.0
-        for w in range(start, end):
-            window_sum += min(raw_gains[w], max_allowable_gain)
-        smoothed_gains[i] = window_sum / (end - start)
+        smoothed_gains[i] = np.sum(clamped_gains[start:end]) / (end - start)
 
-    # apply gain
+    # apply gain, calculate noise floor
+    noise_sum = 0
+    noise_samples = 0
     for i in range(burst_count):
         current_burst = phase_sequence[i]
         current_burst_start = current_burst.start
-        next_burst_start = phase_sequence[i + 1].start if i < burst_count - 1 else len(chroma)
+
+        if i < burst_count - 1:
+            next_burst_start = phase_sequence[i + 1].start
+        else:
+            next_burst_start = len(chroma)
 
         if current_burst.line_number < burst_detected_line:
-            chroma[current_burst_start:next_burst_start] = 0
+            chroma[current_burst_start:next_burst_start] = 0.0
         else:
             gain_start = smoothed_gains[i]
-            gain_end = smoothed_gains[i + 1] if i < burst_count - 1 else smoothed_gains[i]
-            gain_increment = (gain_end - gain_start) / (next_burst_start - current_burst_start)
-            gain = gain_start
+            if i < burst_count - 1:
+                gain_end = smoothed_gains[i + 1] 
+            else:
+                gain_end = smoothed_gains[i]
 
-            for j in range(current_burst_start, next_burst_start):
-                chroma[j] = chroma[j] * gain
-                gain += gain_increment
+            length = next_burst_start - current_burst_start
+            if length > 0:
+                gain_increment = (gain_end - gain_start) / length
+                gain = gain_start
 
-    # calculate RMS
-    if len(valid_gains_list) > 0:
-        sq_sum = 0.0
-        for g in valid_gains_list:
-            # Reconstruct original amplitude from valid gains to calculate signal RMS
-            amp = burst_abs_ref / g
-            sq_sum += amp * amp
-        return np.sqrt(sq_sum / len(valid_gains_list))
+                # apply gain
+                for j in range(current_burst_start, next_burst_start):
+                    chroma[j] = chroma[j] * gain
+                    gain += gain_increment
 
-    return 0.0
+                # get noise floor of sync tip area in the chroma channel
+                sync_tip = chroma[next_burst_start + 4 - sync_tip_len : next_burst_start - 4]
+
+                # MAD
+                med = np.median(sync_tip)
+                abs_dev = np.abs(sync_tip - med)
+                mad = np.median(abs_dev)
+
+                # Accumulate the noise floor
+                noise_sum += mad * 1.4826
+                noise_samples += 1
+            
+    # Calculate the average noise floor for the entire processed region
+    noise_floor = noise_sum / noise_samples if noise_samples > 0 else 0.0
+
+    # return mean of means
+    if valid_count > 0:
+        return np.mean(valid_amps[:valid_count]), noise_floor
+
+    return 0.0, noise_floor
 
 
 @njit(cache=True, nogil=True)
@@ -775,7 +812,6 @@ def upconvert_chroma(
 @njit(nogil=True, cache=False, fastmath=False)
 def upconvert_chroma_phase_comp(
     chroma,
-    uphet,
     lineoffset,
     outwidth,
     phase_rotation_sequence,
@@ -840,7 +876,6 @@ def upconvert_chroma_phase_comp(
 
         # Slice target and source arrays to provide direct contiguous memory views
         chroma_slice = chroma[linestart:lineend]
-        uphet_slice = uphet[linestart:lineend]
 
         # No outer dependencies so LLVM can vectorize
         for k in range(outwidth):
@@ -848,7 +883,7 @@ def upconvert_chroma_phase_comp(
             theta_k = theta_0 + alpha * local_idx[k] + beta * (local_idx[k] * local_idx[k])
             
             # Vectorized trigonometric and arithmetic execution
-            uphet_slice[k] = chroma_slice[k] * -np.cos(theta_k) - dc_val
+            chroma_slice[k] = chroma_slice[k] * -np.cos(theta_k) - dc_val
 
 
 @njit(cache=True, nogil=True)
@@ -964,7 +999,7 @@ def decode_chroma_phase_rotation(
         burstarea,
         field.rf.fsc_wave,
         field.rf.fsc_cos_wave,
-        field.rf.chroma_afc.fsc_mhz * 1e6,
+        field.rf.SysParams['fsc_mhz'] * 1e6,
         detect_chroma_track_phase,
         rotation_check_start_line, # check for track phase rotation around the headswitching area (bottom of field)
         field.rf.options.enable_color_killer,
@@ -1667,6 +1702,85 @@ def _process_chroma_secam_method1(field, chroma, linesout, outwidth, burstarea):
     return uphet
 
 
+@cache
+def _gen_chroma_fft_filter(
+    filter_len: int,
+    fsc: float,
+    color_under_carrier_f: float,
+    bw_lower_hz: float,
+    heterodyne_attenuation_db: float,
+    order: int,
+) -> np.ndarray:
+    """
+    Generate asymmetric Super-Gaussian bandpass mask in the frequency domain.
+    """
+
+    # calculate upper bandwidth limit that is required to remove the heterodyne up conversion product
+    # at the supplied attenuation
+    A = 10.0 ** (-abs(heterodyne_attenuation_db) / 20.0)
+    delta_f = 2.0 * color_under_carrier_f
+    exponent = 1.0 / (2.0 * order)
+    bw_upper_hz = delta_f / ((-np.log(A)) ** exponent)
+
+    freqs_up = sps_fft.rfftfreq(filter_len, d=1.0 / (fsc * 4.0))
+    mask = np.zeros_like(freqs_up, dtype=np.float64)
+
+    lower_idx = freqs_up <= fsc
+    upper_idx = freqs_up > fsc
+
+    # asymmetric Super-Gaussian evaluation around subcarrier (fsc)
+    mask[lower_idx] = np.exp(-((freqs_up[lower_idx] - fsc) / bw_lower_hz) ** (2 * order))
+    mask[upper_idx] = np.exp(-((freqs_up[upper_idx] - fsc) / bw_upper_hz) ** (2 * order))
+
+    return mask
+
+
+def filter_chroma_fft(
+    uphet: np.ndarray, 
+    fsc: float,
+    color_under_carrier_f: float,
+    bw_lower_hz: float,               # Lower chroma bandwidth (1.3 MHz below fsc)
+    heterodyne_attenuation_db: float, # Rejection target at sum product (dB)
+    order: int = 2,                   # filter order
+    pad_samples: int = 256,
+) -> np.ndarray:
+    """
+    Zero-phase FFT bandpass filter using a Super-Gaussian mask.
+    Dynamically computes bw_upper_hz from color_under_carrier_f to guarantee
+    stopband attenuation at the heterodyne sum product.
+    """
+    N_raw = len(uphet)
+
+    # pad to nearest fast FFT length (combines 2, 3, 5, 7 prime factors)
+    min_pad_len = N_raw + 2 * max(1, int(pad_samples))
+    N_up = sps_fft.next_fast_len(min_pad_len)
+
+    # Symmetric pad calculation to center the signal in the fast length array
+    pad_left = (N_up - N_raw) // 2
+    pad_right = N_up - N_raw - pad_left
+
+    x_padded = np.pad(uphet, (pad_left, pad_right), mode='reflect')
+
+    mask = _gen_chroma_fft_filter(
+        N_up,
+        fsc,
+        color_under_carrier_f,
+        bw_lower_hz,
+        heterodyne_attenuation_db,
+        order
+    )
+
+    # apply filter against Forward Real FFT
+    F_filtered = sps_fft.rfft(x_padded)
+    F_filtered *= mask
+
+    # return to real signal
+    chroma_padded = sps_fft.irfft(F_filtered, n=N_up)
+
+    # remove padding
+    return chroma_padded[pad_left : pad_left + N_raw]
+
+
 def process_chroma(
     field,
     disable_deemph=False,
@@ -1678,15 +1792,30 @@ def process_chroma(
     linesout = field.outlinecount
     outwidth = field.outlinelen
 
-    uphet = np.zeros((linesout * outwidth), dtype=np.float32)
     if field.burst_detected_line == -1:
         # skip chroma if the color killer is active for the whole field
-        return uphet
+        return np.zeros((linesout * outwidth), dtype=np.float32)
+    
+    if (
+        not field.rf.options.disable_phase_correction
+        and field.rf.color_system == "NTSC"
+    ):
+        field.fieldPhaseID, target_phase = ntsc_color_framing_map[
+            (field.isFirstField, (field.field_number // 2) % 2)
+        ]
+        chroma_shift_direction = 1 if target_phase else -1
+    else:
+        chroma_shift_direction = 0
 
     # Run TBC/downscale on chroma (if new field, else uses cache)
     # Cached if chroma process is run multiple times on one field due to track detection.
     if field.chroma_tbc_buffer is None:
-        chroma, _, _ = ldd.Field.downscale(field, channel="demod_burst")
+        # shift the chroma to reverse group delay caused by the color under heterodyne filter
+        # this is dependent on color framing, and is disabled if color framing is disabled
+        # TODO: shift amount may need tuning / needs validation
+        chroma_subcarrier_delay_cycles = field.rf.SysParams['fsc_mhz'] * 1e6 / (2.0 * np.pi * field.rf.DecoderParams["color_under_carrier"])
+        chroma_subcarrier_delay_samples = chroma_subcarrier_delay_cycles * 4
+        chroma, _, _ = ldd.Field.downscale(field, channel="demod_burst", shift=chroma_subcarrier_delay_samples * chroma_shift_direction)
 
         # If chroma AFC is enabled
         if field.rf.do_cafc:
@@ -1723,7 +1852,7 @@ def process_chroma(
                 outwidth,
                 porch_window,
                 field.rf.chroma_afc.true_samp_rate,
-                field.rf.chroma_afc.color_under,
+                field.rf.DecoderParams["color_under_carrier"],
             )
             if carrier_offset is not None:
                 field.rf.secam_servo_avg.push(carrier_offset)
@@ -1755,9 +1884,6 @@ def process_chroma(
         not field.rf.options.disable_phase_correction
         and field.rf.color_system == "NTSC"
     ):
-        field.fieldPhaseID, target_phase = ntsc_color_framing_map[
-            (field.isFirstField, (field.field_number // 2) % 2)
-        ]
         target_phase_even = target_phase
         target_phase_odd = target_phase
 
@@ -1769,18 +1895,20 @@ def process_chroma(
         #         (field.isFirstField, line_6_burst_present, (field.field_number // 4) % 2)
         #     ]
 
-        # offset heterodyne for each line to correct color phase
+        # this uses the burst measurements to interpolate the correct phase of the color under heterodyne
+        # phase issues are corrected continiously for each sample using a linear spline interpolated from the burst measurements
+        # the mixing is performed on the upsampled signal to avoid aliasing introduced from the up-heterodyne mixing product
         upconvert_chroma_phase_comp(
-            chroma,
-            uphet,
+            chroma, # modifies this in place
             lineoffset,
             outwidth,
             field.phase_sequence,
-            field.rf.chroma_afc.color_under,
-            field.rf.chroma_afc.fsc_mhz * 1e6,
+            field.rf.DecoderParams["color_under_carrier"],
+            field.rf.SysParams["fsc_mhz"] * 1e6,
             target_phase_even,
-            target_phase_odd
+            target_phase_odd,
         )
+        uphet = chroma
     else:
         if field.rf.chroma_afc.conversion_lo is not None:
             # Explicit conversion LO (ME-SECAM): trim it by the smoothed
@@ -1808,6 +1936,7 @@ def process_chroma(
                 else field.rf.chroma_heterodyne
             )
 
+        uphet = np.zeros((linesout * outwidth), dtype=np.float32)
         upconvert_chroma(
             chroma,
             uphet,
@@ -1821,13 +1950,13 @@ def process_chroma(
     # Mixing the signals will produce waves at the difference and sum of the
     # frequencies. We only want the difference wave which is at the correct color
     # carrier frequency here.
-    # We do however want to be careful to avoid filtering out too much of the sideband.
-    uphet = sosfiltfilt_rust(field.rf.Filters["FChromaFinal"], uphet)
-
-    # FFT filter way to use a supergauss filter to more sharply cut out the upper harmonic
-    # This may be a better approach but slows down things a bit much so not using for now
-    # orig_len = len(uphet)
-    # uphet = np_fft.irfft(np_fft.rfft(uphet) * field.rf.Filters["FChromaFinal"], n=orig_len)
+    uphet = filter_chroma_fft(
+        uphet,
+        field.rf.SysParams["fsc_mhz"] * 1e6,
+        field.rf.DecoderParams["color_under_carrier"],
+        1.3e6, # lower chroma bandwidth (roughly this for PAL / NTSC)
+        80.0   # heterodyne up-mixing attenuation
+    )
 
     if do_chroma_deemphasis:
         b, a = field.rf.Filters["chroma_deemphasis"]
@@ -1840,17 +1969,119 @@ def process_chroma(
         else:
             uphet = comb_c_pal(uphet, outwidth)
 
-    # Final automatic chroma gain.
-    mean_rms = chroma_automatic_gain(
+    # Chroma AGC
+    mean_rms, chroma_noise_floor = chroma_automatic_gain(
         uphet,
         field.rf.SysParams["burst_abs_ref"],
         field.phase_sequence,
-        field.burst_detected_line
+        field.burst_detected_line,
+        math.floor(field.usectooutpx(field.rf.SysParams["hsyncPulseUS"]))
     )
 
     field.rf.field_averages.chroma_level.push(mean_rms)
 
+    if field.rf.options.cti_mix != 0:
+        chroma_transient_improvement(
+            uphet,
+            lineoffset * outwidth,
+            outwidth,
+            chroma_noise_floor,
+            field.rf.options.cti_width,
+            field.rf.options.cti_mix,
+        )
+
     return uphet
+
+
+@njit(cache=True, fastmath=True, nogil=True)
+def chroma_transient_improvement(
+    chroma_data: np.ndarray,
+    line_start: int,
+    line_length: int,
+    base_noise_floor: float,
+    cti_width: int,
+    cti_mix: float,
+) -> np.ndarray:
+    """
+    Accelerates the sweep rate between color states without warping phase.
+    Operates symmetrically by measuring forward/backward vector neighbors simultaneously.
+    """
+    # Configure geometric multi-pass decay
+    decay = 0.25
+    num_passes = 4
+
+    # Pre-calculate mix factors
+    mix_factors = np.empty(num_passes, dtype=np.float32)
+    for p in range(num_passes):
+        mix_factors[p] = cti_mix * (decay ** p)
+
+    # Establish spatial boundaries
+    remaining_samples = chroma_data.shape[0] - line_start
+    line_count = remaining_samples // line_length
+    
+    # Establish the 4fsc phase-locked sweep radius and scaling threshold
+    sweep_radius = int(max(4, cti_width * 4))
+    mad_threshold = base_noise_floor * math.sqrt(cti_width)
+
+    # Protect against edge bleeding
+    start_s = sweep_radius + 1
+    end_s = line_length - (sweep_radius + 1)
+
+    line_buffer = np.empty(line_length, dtype=chroma_data.dtype)
+
+    # --- Optimized Vector-Ready Loop ---
+    for l in range(line_count):
+        curr_line_offset = line_start + (l * line_length)
+
+        for p in range(num_passes):
+            current_mix = mix_factors[p]
+            line_buffer[:] = chroma_data[curr_line_offset : curr_line_offset + line_length]
+
+            for s in range(start_s, end_s):
+                idx = curr_line_offset + s
+                
+                i_curr = line_buffer[s]
+                q_curr = line_buffer[s - 1]
+                
+                i_past = line_buffer[s - sweep_radius]
+                q_past = line_buffer[s - sweep_radius - 1]
+                
+                i_future = line_buffer[s + sweep_radius]
+                q_future = line_buffer[s + sweep_radius - 1]
+                
+                # Measure vector distances
+                i_delta_back = i_curr - i_past
+                q_delta_back = q_curr - q_past
+                dist_back = math.sqrt(i_delta_back * i_delta_back + q_delta_back * q_delta_back)
+                
+                i_delta_forw = i_future - i_curr
+                q_delta_forw = q_future - q_curr
+                dist_forw = math.sqrt(i_delta_forw * i_delta_forw + q_delta_forw * q_delta_forw)
+                
+                total_sweep_distance = dist_back + dist_forw
+                
+                # Noise Gate
+                gate_mask = 1.0 if total_sweep_distance > mad_threshold else 0.0
+                
+                # Inherent Boundary (Naturally bounds to [0.0, 1.0) because distances are >= 0)
+                norm_progress = dist_back / total_sweep_distance if total_sweep_distance != 0 else 0
+                
+                # Transform the progress via sigmoidal sweep-acceleration function
+                is_lower = norm_progress < 0.5
+                
+                inv_prog = 1.0 - norm_progress
+                t_low = 4.0 * (norm_progress * norm_progress)
+                t_high = 1.0 - 4.0 * (inv_prog * inv_prog)
+                
+                # Select interpolation weights and anchor to the closer sample (before or after)
+                t = t_low if is_lower else t_high
+                anchor_a = i_past if is_lower else i_curr
+                anchor_b = i_curr if is_lower else i_future
+                
+                # 4. Final vector mix
+                # If gate_mask is 0.0, the delta cancels out and i_curr is cleanly written back
+                i_target = anchor_a + t * (anchor_b - anchor_a)
+                chroma_data[idx] = i_curr + (current_mix * gate_mask) * (i_target - i_curr)
 
 
 def decode_chroma(field, do_chroma_deemphasis=False):

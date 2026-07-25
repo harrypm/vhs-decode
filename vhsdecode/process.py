@@ -21,7 +21,6 @@ from vhsdecode.chroma import chroma_color_under_filter
 import vhsdecode.formats as vhs_formats
 
 from vhsdecode.addons.chromasep import ChromaSepClass
-from vhsdecode.addons.resync import Resync
 from vhsdecode.addons.chromaAFC import ChromaAFC
 
 from vhsdecode.demod import replace_spikes, unwrap_hilbert, smooth_spikes
@@ -761,6 +760,8 @@ class VHSRFDecode(ldd.RFDecode):
                 "fm_audio_notch",
                 "chroma_audio_notch",
                 "chroma_offset",
+                "cti_mix",
+                "cti_width",
                 "ire0_adjust",
                 "gnrc_afe",
                 "relaxed_line0",
@@ -804,6 +805,8 @@ class VHSRFDecode(ldd.RFDecode):
             rf_options.get("fm_audio_notch", 0) or (tape_format == "HI8"),
             self.DecoderParams.get("chroma_audio_notch_freq", 0) > 0,
             int(self.DecoderParams.get("chroma_offset", 5) * (self.freq / 40.0)),
+            rf_options.get("cti_mix", 1),
+            rf_options.get("cti_width", 2),
             ire0_adjust,
             rf_options.get("gnrc_afe", False),
             rf_options.get("relaxed_line0", False),
@@ -961,32 +964,6 @@ class VHSRFDecode(ldd.RFDecode):
         # Increase the cutoff at the end of blocks to avoid edge distortion from filters
         # making it through.
         self.blockcut_end = 1024
-
-        level_detect_divisor = rf_options.get("level_detect_divisor", 1)
-
-        if level_detect_divisor < 1 or level_detect_divisor > 10:
-            ldd.logger.warning(
-                "Invalid level detect divisor value %s, using default.",
-                level_detect_divisor,
-            )
-            level_detect_divisor = 1
-        elif inputfreq / level_detect_divisor < 4:
-            ldd.logger.warning(
-                "Level detect divisor too high (%s) for input frequency (%s) mhz. Limiting to %s",
-                level_detect_divisor,
-                inputfreq,
-                int(inputfreq // 4),
-            )
-            level_detect_divisor = int(inputfreq // 4)
-
-        self.resync = Resync(
-            self.freq_hz,
-            self.SysParams,
-            self._sysparams_const,
-            self._processing_thread_pool,
-            divisor=level_detect_divisor,
-            debug=self.debug,
-        )
 
         if self._chroma_trap:
             self.chromaTrap = ChromaSepClass(
