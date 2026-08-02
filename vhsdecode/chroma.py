@@ -1972,13 +1972,21 @@ def process_chroma(
     # Mixing the signals will produce waves at the difference and sum of the
     # frequencies. We only want the difference wave which is at the correct color
     # carrier frequency here.
-    uphet = filter_chroma_fft(
-        uphet,
-        field.rf.SysParams["fsc_mhz"] * 1e6,
-        field.rf.DecoderParams["color_under_carrier"],
-        1.3e6, # lower chroma bandwidth (roughly this for PAL / NTSC)
-        80.0   # heterodyne up-mixing attenuation
-    )
+    if field.rf.color_system == "MESECAM":
+        # The restored SECAM FM block is anchored at conversion_lo -
+        # color_under (4.328125 MHz), not fsc, so the fsc-anchored FFT mask
+        # sits ~106 kHz high on it and loses the tight top edge that
+        # suppresses high-side FM splatter from saturated transitions. Keep
+        # the block-anchored Butterworth here.
+        uphet = sosfiltfilt_rust(field.rf.Filters["FChromaFinal"], uphet)
+    else:
+        uphet = filter_chroma_fft(
+            uphet,
+            field.rf.SysParams["fsc_mhz"] * 1e6,
+            field.rf.DecoderParams["color_under_carrier"],
+            1.3e6, # lower chroma bandwidth (roughly this for PAL / NTSC)
+            80.0   # heterodyne up-mixing attenuation
+        )
 
     if do_chroma_deemphasis:
         b, a = field.rf.Filters["chroma_deemphasis"]
