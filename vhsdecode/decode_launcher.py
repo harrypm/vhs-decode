@@ -106,6 +106,7 @@ SYSTEM_OPTIONS_DECODE = [
     "NTSCJ",
     "PAL",
     "PAL_M",
+    "SECAM",
     "MESECAM",
     "405",
     "819",
@@ -178,6 +179,7 @@ FILENAME_SYSTEM_HINTS: list[tuple[tuple[str, ...], str]] = [
     (("ntsc",), "NTSC"),
     (("pal_m", "pal-m", "palm"), "PAL_M"),
     (("mesecam",), "MESECAM"),
+    (("secam",), "SECAM"),
     (("pal",), "PAL"),
 ]
 
