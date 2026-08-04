@@ -1148,6 +1148,28 @@ def upconvert_secam_method1(
     envelope = np.abs(analytic)
     phase = np.unwrap(np.angle(analytic))
 
+    # Clamp under-carrier deviation to SECAM's legal window before x4
+    # multiplication.
+    # BT.470-6 Table 2 item 2.12 and BT.1700 Part C Table 4 item 10e limit the
+    # carrier to 3.900-4.756 MHz: the per-component deviation maxima
+    # (D′B -350/+506 kHz, D′R -506/+350 kHz) mirror across the carrier pair, so
+    # both components share the corridor (fOB/4 - 87.5 kHz to fOR/4 + 87.5 kHz
+    # in the under-carrier domain). The studio or broadcast limiter ideally
+    # clipped the pre-corrected color difference to these bounds, so anything
+    # outside the window is noise or a tape channel-truncation transient; x4
+    # multiply would scale such excursions x4 and downstream de-emphasis smears
+    # them into streaks at saturated transitions ("fire"). Clipping
+    # instantaneous frequency and reintegrating keeps the carrier segment
+    # smooth: clipped spans become constant-frequency stretches.
+    f_under = np.gradient(phase) * (samp_rate / (2.0 * np.pi))
+    np.clip(
+        f_under,
+        SECAM_FOB / 4 - 350e3 / 4,
+        SECAM_FOR / 4 + 350e3 / 4,
+        out=f_under,
+    )
+    phase = np.cumsum(f_under) * (2.0 * np.pi / samp_rate)
+
     # Restored instantaneous frequency for the bell shaping. Central
     # difference plus a short moving average keeps sample-level phase noise
     # from ending up as amplitude noise; the bell curve itself is smooth so
@@ -1950,13 +1972,21 @@ def process_chroma(
     # Mixing the signals will produce waves at the difference and sum of the
     # frequencies. We only want the difference wave which is at the correct color
     # carrier frequency here.
-    uphet = filter_chroma_fft(
-        uphet,
-        field.rf.SysParams["fsc_mhz"] * 1e6,
-        field.rf.DecoderParams["color_under_carrier"],
-        1.3e6, # lower chroma bandwidth (roughly this for PAL / NTSC)
-        80.0   # heterodyne up-mixing attenuation
-    )
+    if field.rf.color_system == "MESECAM":
+        # The restored SECAM FM block is anchored at conversion_lo -
+        # color_under (4.328125 MHz), not fsc, so the fsc-anchored FFT mask
+        # sits ~106 kHz high on it and loses the tight top edge that
+        # suppresses high-side FM splatter from saturated transitions. Keep
+        # the block-anchored Butterworth here.
+        uphet = sosfiltfilt_rust(field.rf.Filters["FChromaFinal"], uphet)
+    else:
+        uphet = filter_chroma_fft(
+            uphet,
+            field.rf.SysParams["fsc_mhz"] * 1e6,
+            field.rf.DecoderParams["color_under_carrier"],
+            1.3e6, # lower chroma bandwidth (roughly this for PAL / NTSC)
+            80.0   # heterodyne up-mixing attenuation
+        )
 
     if do_chroma_deemphasis:
         b, a = field.rf.Filters["chroma_deemphasis"]
