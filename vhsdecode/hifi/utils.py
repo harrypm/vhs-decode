@@ -116,6 +116,15 @@ class NUMA:
                 ctypes.c_size_t,
                 ctypes.c_int,
             ]
+            # these take/return struct bitmask*; without an explicit restype
+            # ctypes assumes c_int and truncates the pointer to 32 bits
+            libnuma.numa_allocate_nodemask.restype = ctypes.c_void_p
+            libnuma.numa_bitmask_clearall.argtypes = [ctypes.c_void_p]
+            libnuma.numa_bitmask_clearall.restype = ctypes.c_void_p
+            libnuma.numa_bitmask_setbit.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+            libnuma.numa_bitmask_setbit.restype = ctypes.c_void_p
+            libnuma.numa_run_on_node_mask.argtypes = [ctypes.c_void_p]
+            libnuma.numa_run_on_node_mask.restype = ctypes.c_int
 
             cls._libnuma = libnuma
             return libnuma
