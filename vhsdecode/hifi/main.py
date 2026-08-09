@@ -1346,7 +1346,7 @@ async def decode_parallel(
         guess_bias(decoder, decode_options["input_file"], int(decode_options["input_rate"]))
 
     input_file = decode_options["input_file"]
-    input_format_override = decode_options["input_format_override"]
+    input_format_override = decode_options.get("input_format_override")
     output_file = decode_options["output_file"]
 
     channel_1_suffix = DEFAULT_CHANNEL_SUFFIX + "_1"

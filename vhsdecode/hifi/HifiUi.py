@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from vhsdecode.hifi.utils import parse_flac_streaminfo
+from vhsdecode.drop_paths import extract_dropped_file_paths
 
 try:
     from PyQt6.QtGui import QIcon
@@ -262,7 +263,7 @@ def ui_parameters_to_decode_options(values: MainUIParameters):
     decode_options = {
         "input_rate": float(values.input_sample_rate) * 1e6,
         "standard": "p" if values.standard == "PAL" else "n",
-        "format": "vhs" if values.format in ("VHS", "Betamax", "Betacam") else "8mm",
+        "format": "vhs" if values.format == "VHS" else "8mm",
         "demod_type": values.demod_type.lower(),
         "auto_fine_tune": values.automatic_fine_tuning,
         "bias_guess": values.bias_guess,
@@ -293,6 +294,7 @@ def ui_parameters_to_decode_options(values: MainUIParameters):
         "normalize": values.normalize,
         "input_file": values.input_file,
         "output_file": values.output_file,
+        "input_format_override": None,
         "resampler_quality": values.resampler_quality,
         "head_switching_interpolation": values.head_switching_interpolation,
         "doc": ui_to_doc_mode[values.doc],
@@ -390,10 +392,17 @@ class HifiUi(QMainWindow):
         )
 
         self.main_layout: QHBoxLayout = QVBoxLayout(self.central_widget)
+        # Qt6/macOS style metrics are larger than the historical v0.4.0 app
+        # runtime; set explicit compact geometry so spacing matches the release
+        # GUI visual density regardless of Qt style defaults.
+        self.main_layout.setContentsMargins(4, 4, 4, 4)
+        self.main_layout.setSpacing(2)
         main_layout_callback(self.main_layout)
 
         # Inner controls layout
         controls_layout = QVBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(2)
         self.main_layout.addLayout(controls_layout)
 
         # Input sample rate selection
@@ -422,6 +431,8 @@ class HifiUi(QMainWindow):
 
         # Transport controls
         transport_controls_layout = self.build_transport_controls()
+        transport_controls_layout.setContentsMargins(0, 0, 0, 0)
+        transport_controls_layout.setSpacing(6)
         self.main_layout.addLayout(transport_controls_layout)
 
         # Weighting / Deemphasis plot
@@ -527,7 +538,7 @@ class HifiUi(QMainWindow):
         self.central_widget.adjustSize()
         # disables resize
         if "h" in axis:
-            self.setFixedWidth(int(self.minimumSizeHint().width()))
+            self.setFixedWidth(max(320, int(self.minimumSizeHint().width()) - 150))
         # sets fixed height
         if "v" in axis:
             self.setFixedHeight(self.minimumSizeHint().height())
@@ -546,10 +557,13 @@ class HifiUi(QMainWindow):
             self.pause_button.sizeHint().height(),
             self.stop_button.sizeHint().height(),
         )
-        self.preview_button.setFixedHeight(max_button_height)
-        self.play_button.setFixedHeight(max_button_height)
-        self.pause_button.setFixedHeight(max_button_height)
-        self.stop_button.setFixedHeight(max_button_height)
+        # Keep transport controls compact/consistent across Qt styles.
+        compact_height = min(max_button_height, self.fontMetrics().height() + 9)
+        compact_height = max(compact_height, 21)
+        self.preview_button.setFixedHeight(compact_height)
+        self.play_button.setFixedHeight(compact_height)
+        self.pause_button.setFixedHeight(compact_height)
+        self.stop_button.setFixedHeight(compact_height)
         transport_controls_layout.addWidget(self.preview_button)
         transport_controls_layout.addWidget(self.play_button)
         transport_controls_layout.addWidget(self.pause_button)
@@ -637,16 +651,7 @@ class HifiUi(QMainWindow):
         format_layout = QHBoxLayout()
         format_label = QLabel("Format")
         self.format_combo = QComboBox(self)
-        self.format_combo.addItems(["VHS", "Video8/Hi8", "Betamax", "Betacam"])
-        self.format_combo.setToolTip(
-            "Tape format.\n"
-            "VHS / SVHS: VHS HiFi AFM stereo profile.\n"
-            "Video8/Hi8: 8mm AFM audio profile.\n"
-            "Betamax: placeholder - uses the VHS decode profile until a "
-            "dedicated Betamax profile is available.\n"
-            "Betacam: placeholder - uses the VHS decode profile until a "
-            "dedicated Betacam profile is available."
-        )
+        self.format_combo.addItems(["VHS", "Video8/Hi8"])
         format_layout.addWidget(format_label)
         format_layout.addWidget(self.format_combo)
         self.format_combo.currentIndexChanged.connect(self.on_format_change)
@@ -1221,7 +1226,7 @@ class HifiUi(QMainWindow):
         afe_right_carrier=0,
     ):
         standard, _ = get_standard(
-            "vhs" if format in ("VHS", "Betamax", "Betacam") else "8mm",
+            "vhs" if format == "VHS" else "8mm",
             "p" if standard == "PAL" else "n",
             afe_left_carrier_deviation,
             afe_right_carrier_deviation,
@@ -1234,7 +1239,7 @@ class HifiUi(QMainWindow):
         self.afe_right_carrier_spinbox.setValue(int(standard.RCarrierRef))
 
     def update_deemphasis_expander_values(self, format):
-        if format in ("VHS", "Betamax", "Betacam"):
+        if format == "VHS":
             self.deemphasis_low_tau_dial_control.setValue(DEFAULT_VHS_DEEMPHASIS_TAU_1)
             self.deemphasis_high_tau_dial_control.setValue(DEFAULT_VHS_DEEMPHASIS_TAU_2)
             self.nr_deemphasis_low_tau_dial_control.setValue(DEFAULT_VHS_NR_DEEMPHASIS_TAU_1)
@@ -1272,31 +1277,11 @@ class HifiUi(QMainWindow):
         )
 
     def on_format_change(self):
-        current_format = self.format_combo.currentText()
         self.update_afe_values(
-            format=current_format,
+            format=self.format_combo.currentText(),
             standard=self.standard_combo.currentText(),
         )
-        self.update_deemphasis_expander_values(current_format)
-        self._warn_if_placeholder_format(current_format)
-
-    PLACEHOLDER_FORMATS = ("Betamax", "Betacam")
-
-    def _warn_if_placeholder_format(self, current_format: str) -> None:
-        if current_format in self.PLACEHOLDER_FORMATS:
-            print(
-                f"{current_format}: using the VHS decode profile as a placeholder "
-                "until a dedicated profile is available."
-            )
-            QMessageBox.warning(
-                self,
-                "Placeholder format",
-                f"{current_format}: Place Holder - Format yet to be implemented.\n\n"
-                "Decoding will use the VHS profile as a stand-in.",
-            )
-
-    def _is_placeholder_format_selected(self) -> bool:
-        return self.format_combo.currentText() in self.PLACEHOLDER_FORMATS
+        self.update_deemphasis_expander_values(self.format_combo.currentText())
 
     def change_button_color(self, button, color):
         button.setStyleSheet(
@@ -1355,8 +1340,6 @@ class HifiUi(QMainWindow):
 
     def on_play_clicked(self):
         print("[PLAY] Play command issued.")
-        if self._is_placeholder_format_selected():
-            self._warn_if_placeholder_format(self.format_combo.currentText())
         if self.confirm_overwrite():
             return
 
@@ -1369,8 +1352,6 @@ class HifiUi(QMainWindow):
 
     def on_preview_clicked(self):
         print("[PREVIEW] Preview command issued.")
-        if self._is_placeholder_format_selected():
-            self._warn_if_placeholder_format(self.format_combo.currentText())
         if self.confirm_overwrite():
             return
 
@@ -1483,9 +1464,14 @@ class FileOutputDialogUI(HifiUi):
         self.file_output_button = QPushButton("Browse", self)
         self.file_output_button.clicked.connect(self.on_file_output_button_clicked)
         self.file_output_layout = QHBoxLayout()
+        self.file_output_layout.setContentsMargins(0, 0, 0, 0)
+        self.file_output_layout.setSpacing(4)
         self.file_output_layout.addWidget(self.file_output_label)
         self.file_output_layout.addWidget(self.file_output_textbox)
         self.file_output_layout.addWidget(self.file_output_button)
+        self.file_output_layout.setStretch(0, 0)
+        self.file_output_layout.setStretch(1, 1)
+        self.file_output_layout.setStretch(2, 0)
         self.main_layout.addLayout(self.file_output_layout)
         # sets browse button height to match text box height
         self.file_output_button.setFixedHeight(
@@ -1591,6 +1577,8 @@ class DialControl(QWidget):
 class CollapsableSection(QVBoxLayout):
     def __init__(self, main_window, label_text, default_collapsed=False, bg_color = "#333"):
         super(CollapsableSection, self).__init__()
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setSpacing(1)
 
         self.main_window = main_window
         self.main_window.collapsableSections.append(self)
@@ -1692,7 +1680,7 @@ class FileIODialogUI(HifiUi):
         self.file_input_label = QLabel("Input file")
         self.file_input_textbox = QLineEdit(self)
         self.file_input_textbox.setPlaceholderText(
-            "Select, type or drag && drop the RF capture file here"
+            "Select, type or drag & drop the RF capture file here"
         )
         # let drops fall through to the window-level drop handler instead of
         # QLineEdit pasting a file:// url as plain text
@@ -1704,17 +1692,15 @@ class FileIODialogUI(HifiUi):
         self.file_input_button = QPushButton("Browse", self)
         self.file_input_button.clicked.connect(self.on_file_input_button_clicked)
         self.file_input_layout = QHBoxLayout()
+        self.file_input_layout.setContentsMargins(0, 0, 0, 0)
+        self.file_input_layout.setSpacing(4)
         self.file_input_layout.addWidget(self.file_input_label)
         self.file_input_layout.addWidget(self.file_input_textbox)
         self.file_input_layout.addWidget(self.file_input_button)
+        self.file_input_layout.setStretch(0, 0)
+        self.file_input_layout.setStretch(1, 1)
+        self.file_input_layout.setStretch(2, 0)
         self.main_layout.addLayout(self.file_input_layout)
-        # sets browse button height to match text box height
-        self.file_input_button.setFixedHeight(
-            self.file_input_textbox.sizeHint().height()
-        )
-        self.file_input_textbox.setFixedHeight(
-            self.file_input_textbox.sizeHint().height()
-        )
 
         # Add file output widgets
         self.file_output_label = QLabel("Output file")
@@ -1722,24 +1708,42 @@ class FileIODialogUI(HifiUi):
         self.file_output_button = QPushButton("Browse", self)
         self.file_output_button.clicked.connect(self.on_file_output_button_clicked)
         self.file_output_layout = QHBoxLayout()
+        self.file_output_layout.setContentsMargins(0, 0, 0, 0)
+        self.file_output_layout.setSpacing(4)
         self.file_output_layout.addWidget(self.file_output_label)
         self.file_output_layout.addWidget(self.file_output_textbox)
         self.file_output_layout.addWidget(self.file_output_button)
+        self.file_output_layout.setStretch(0, 0)
+        self.file_output_layout.setStretch(1, 1)
+        self.file_output_layout.setStretch(2, 0)
         self.main_layout.addLayout(self.file_output_layout)
-        # sets browse button height to match text box height
-        self.file_output_button.setFixedHeight(
-            self.file_output_textbox.sizeHint().height()
+        # Keep both file rows visually uniform, but compact.
+        # Use textbox baseline height and trim a little so the controls don't
+        # grow larger than needed under Qt6/macOS style metrics.
+        base_height = max(
+            self.file_input_textbox.sizeHint().height(),
+            self.file_output_textbox.sizeHint().height(),
         )
-        self.file_output_textbox.setFixedHeight(
-            self.file_output_textbox.sizeHint().height()
+        row_height = max(20, base_height - 2)
+        self.file_input_textbox.setFixedHeight(row_height)
+        self.file_output_textbox.setFixedHeight(row_height)
+        self.file_input_button.setFixedHeight(row_height)
+        self.file_output_button.setFixedHeight(row_height)
+
+        button_width = max(
+            self.file_input_button.sizeHint().width(),
+            self.file_output_button.sizeHint().width(),
         )
-        # sets file input and output text boxes to same width
+        self.file_input_button.setFixedWidth(button_width)
+        self.file_output_button.setFixedWidth(button_width)
+
+        # Keep labels exactly the same width for row alignment.
         max_label_width = max(
             self.file_input_label.sizeHint().width(),
             self.file_output_label.sizeHint().width(),
         )
-        self.file_input_label.setMinimumWidth(max_label_width)
-        self.file_output_label.setMinimumWidth(max_label_width)
+        self.file_input_label.setFixedWidth(max_label_width)
+        self.file_output_label.setFixedWidth(max_label_width)
 
     @staticmethod
     def derive_output_file(input_path: str) -> str:
@@ -1767,10 +1771,25 @@ class FileIODialogUI(HifiUi):
         streaminfo = parse_flac_streaminfo(input_path)
         if streaminfo is None or streaminfo["sample_rate"] <= 0:
             return
-        mhz = streaminfo["sample_rate"] / 1000.0
-        if not 1.0 <= mhz <= 200.0:
-            # does not look like an RF capture rate, leave the setting alone
+        sample_rate = streaminfo["sample_rate"]
+        if sample_rate in (44100, 48000):
+            # Standard audio rates, not an FM RF capture. RF FLAC stores the
+            # rate in kHz (e.g. 40 MSps = 40000), so 44100/48000 are audio.
+            print(
+                "WARNING: Current loaded file could be audio, not FM RF data! "
+                f"(sample rate {sample_rate} Hz)"
+            )
+            # only show the modal for interactive loads (drop/browse/type);
+            # during launcher pre-pop the window is not visible yet, so a
+            # modal here would appear before the main window is shown.
+            if self.isVisible():
+                self.generic_message_box(
+                    "Warning",
+                    "WARNING: Current loaded file could be audio, not FM RF data!",
+                    QMessageBox.Icon.Warning,
+                )
             return
+        mhz = sample_rate / 1000.0
         self.set_input_sample_rate_mhz(mhz)
         print(f"Input sample rate auto set to {mhz:g} MHz from the FLAC header")
 
@@ -1823,19 +1842,30 @@ class FileIODialogUI(HifiUi):
             self.auto_detect_format_system_from_filename(text)
 
     def dragEnterEvent(self, event):
-        mime_data = event.mimeData()
-        if mime_data.hasUrls() and any(
-            url.isLocalFile() for url in mime_data.urls()
-        ):
+        paths = extract_dropped_file_paths(event.mimeData())
+        if any(os.path.isfile(p) for p in paths):
             event.acceptProposedAction()
             return
-        event.ignore()
+        if paths:
+            event.ignore()
+            return
+        super().dragEnterEvent(event)
+
+    # Required on macOS (Cocoa): without dragMoveEvent, move events default to
+    # ignored and the drop target can be invalidated mid-drag, causing the
+    # cursor to show "no drop" and dropEvent to never fire.
+    def dragMoveEvent(self, event):
+        paths = extract_dropped_file_paths(event.mimeData())
+        if any(os.path.isfile(p) for p in paths):
+            event.acceptProposedAction()
+            return
+        if paths:
+            event.ignore()
+            return
+        super().dragMoveEvent(event)
 
     def dropEvent(self, event):
-        for url in event.mimeData().urls():
-            if not url.isLocalFile():
-                continue
-            path = url.toLocalFile()
+        for path in extract_dropped_file_paths(event.mimeData()):
             if os.path.isfile(path):
                 self.set_input_file(path)
                 print(f"Input file set by drag and drop: {path}")
