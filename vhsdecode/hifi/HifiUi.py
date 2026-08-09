@@ -1680,7 +1680,7 @@ class FileIODialogUI(HifiUi):
         self.file_input_label = QLabel("Input file")
         self.file_input_textbox = QLineEdit(self)
         self.file_input_textbox.setPlaceholderText(
-            "Select, type or drag && drop the RF capture file here"
+            "Select, type or drag & drop the RF capture file here"
         )
         # let drops fall through to the window-level drop handler instead of
         # QLineEdit pasting a file:// url as plain text
