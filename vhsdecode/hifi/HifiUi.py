@@ -1771,10 +1771,25 @@ class FileIODialogUI(HifiUi):
         streaminfo = parse_flac_streaminfo(input_path)
         if streaminfo is None or streaminfo["sample_rate"] <= 0:
             return
-        mhz = streaminfo["sample_rate"] / 1000.0
-        if not 1.0 <= mhz <= 200.0:
-            # does not look like an RF capture rate, leave the setting alone
+        sample_rate = streaminfo["sample_rate"]
+        if sample_rate in (44100, 48000):
+            # Standard audio rates, not an FM RF capture. RF FLAC stores the
+            # rate in kHz (e.g. 40 MSps = 40000), so 44100/48000 are audio.
+            print(
+                "WARNING: Current loaded file could be audio, not FM RF data! "
+                f"(sample rate {sample_rate} Hz)"
+            )
+            # only show the modal for interactive loads (drop/browse/type);
+            # during launcher pre-pop the window is not visible yet, so a
+            # modal here would appear before the main window is shown.
+            if self.isVisible():
+                self.generic_message_box(
+                    "Warning",
+                    "WARNING: Current loaded file could be audio, not FM RF data!",
+                    QMessageBox.Icon.Warning,
+                )
             return
+        mhz = sample_rate / 1000.0
         self.set_input_sample_rate_mhz(mhz)
         print(f"Input sample rate auto set to {mhz:g} MHz from the FLAC header")
 
