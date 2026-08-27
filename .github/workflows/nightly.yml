@@ -1,0 +1,273 @@
+name: "Nightly (pre-production)"
+
+# Produces a pre-production (GitHub "pre-release") build from the default
+# branch whenever a pull request is merged into it, or on manual dispatch.
+# It reuses the same reusable build workflows as the production Release
+# pipeline, but publishes a dated `nightly-YYYY-MM-DD` tag marked as a
+# prerelease instead of a draft. Production `v*` tags are untouched.
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  pull_request:
+    types:
+      - closed
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch or SHA) to build the nightly from. Defaults to the dispatch ref."
+        required: false
+        type: string
+
+concurrency:
+  group: nightly
+  # Do not cancel a build that is already publishing; clustered merges will
+  # each complete and the latest one for a given day replaces that day's nightly.
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  TBC_TOOLS_REPO: "harrypm/tbc-tools"
+
+jobs:
+  resolve-nightly:
+    name: Resolve nightly tag and ref
+    # Only run for manual dispatch, or for PRs that were MERGED into the
+    # repository's default branch. Skipped (closed-without-merge) PRs and PRs
+    # targeting other branches produce no nightly.
+    if: ${{ (github.event_name == 'workflow_dispatch') || (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    outputs:
+      nightly_date: ${{ steps.resolve.outputs.nightly_date }}
+      nightly_tag: ${{ steps.resolve.outputs.nightly_tag }}
+      release_title: ${{ steps.resolve.outputs.release_title }}
+      build_ref: ${{ steps.resolve.outputs.build_ref }}
+    steps:
+      - name: Resolve nightly date, tag, and build ref
+        id: resolve
+        env:
+          DISPATCH_REF: ${{ inputs.ref }}
+          PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          WF_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          NIGHTLY_DATE="$(date -u +'%Y-%m-%d')"
+          NIGHTLY_TAG="nightly-${NIGHTLY_DATE}"
+          RELEASE_TITLE="Nightly (pre-production) — ${NIGHTLY_DATE}"
+
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            if [ -n "${DISPATCH_REF}" ]; then
+              BUILD_REF="${DISPATCH_REF}"
+            else
+              BUILD_REF="${WF_SHA}"
+            fi
+          else
+            # pull_request merged: build and tag the exact merge commit on the
+            # default branch. Falls back to the workflow SHA if unavailable.
+            BUILD_REF="${PR_MERGE_SHA}"
+            if [ -z "${BUILD_REF}" ]; then
+              BUILD_REF="${WF_SHA}"
+            fi
+          fi
+
+          if [ -z "${BUILD_REF}" ]; then
+            echo "Could not resolve a commit/branch to build the nightly from."
+            exit 1
+          fi
+
+          echo "nightly_date=${NIGHTLY_DATE}" >> "$GITHUB_OUTPUT"
+          echo "nightly_tag=${NIGHTLY_TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_title=${RELEASE_TITLE}" >> "$GITHUB_OUTPUT"
+          echo "build_ref=${BUILD_REF}" >> "$GITHUB_OUTPUT"
+
+  build-linux:
+    name: Build Linux decode
+    needs: resolve-nightly
+    uses: ./.github/workflows/build_linux_decode.yml
+    with:
+      checkout_ref: ${{ needs.resolve-nightly.outputs.build_ref }}
+    secrets: inherit
+
+  build-windows:
+    name: Build Windows decode
+    needs: resolve-nightly
+    uses: ./.github/workflows/build_windows_decode.yml
+    with:
+      checkout_ref: ${{ needs.resolve-nightly.outputs.build_ref }}
+    secrets: inherit
+
+  build-macos:
+    name: Build macOS decode
+    needs: resolve-nightly
+    uses: ./.github/workflows/build_macos_decode.yml
+    with:
+      checkout_ref: ${{ needs.resolve-nightly.outputs.build_ref }}
+    secrets: inherit
+
+  publish-nightly:
+    name: Publish pre-production nightly release
+    needs: [resolve-nightly, build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    env:
+      NIGHTLY_TAG: ${{ needs.resolve-nightly.outputs.nightly_tag }}
+      RELEASE_TITLE: ${{ needs.resolve-nightly.outputs.release_title }}
+      BUILD_REF: ${{ needs.resolve-nightly.outputs.build_ref }}
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Download Linux decode artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: decode_linux_x86_64
+          path: ./artifacts/decode/linux-x86_64/
+
+      - name: Download Linux arm64 decode artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: decode_linux_arm64
+          path: ./artifacts/decode/linux-arm64/
+
+      - name: Download Windows decode artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: decode_windows_x86_64
+          path: ./artifacts/decode/windows-x86_64/
+
+      - name: Download Windows arm64 decode artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: decode_windows_arm64
+          path: ./artifacts/decode/windows-arm64/
+
+      - name: Download macOS x86_64 decode artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: decode_macos_x86_64
+          path: ./artifacts/decode/macos-x86_64/
+
+      - name: Download macOS arm64 decode artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: decode_macos_arm64
+          path: ./artifacts/decode/macos-arm64/
+
+      - name: Build versioned nightly release assets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/release
+
+          APPIMAGE_X86_PATH="$(find ./artifacts/decode/linux-x86_64 -maxdepth 3 -type f -name '*.AppImage' | head -n 1)"
+          APPIMAGE_ARM_PATH="$(find ./artifacts/decode/linux-arm64 -maxdepth 3 -type f -name '*.AppImage' | head -n 1)"
+          if [ -z "${APPIMAGE_X86_PATH}" ] || [ -z "${APPIMAGE_ARM_PATH}" ]; then
+            echo "Failed to locate one or more Linux AppImage artifacts."
+            exit 1
+          fi
+          cp "${APPIMAGE_X86_PATH}" "./artifacts/release/decode_${NIGHTLY_TAG}_linux_x86_64.AppImage"
+          cp "${APPIMAGE_ARM_PATH}" "./artifacts/release/decode_${NIGHTLY_TAG}_linux_arm64.AppImage"
+
+          mkdir -p ./artifacts/release/windows-x86_64 ./artifacts/release/windows-arm64
+          cp -R ./artifacts/decode/windows-x86_64/. ./artifacts/release/windows-x86_64/
+          cp -R ./artifacts/decode/windows-arm64/. ./artifacts/release/windows-arm64/
+          (
+            cd ./artifacts/release/windows-x86_64
+            zip -r "../decode_${NIGHTLY_TAG}_windows_x86_64.zip" .
+          )
+          (
+            cd ./artifacts/release/windows-arm64
+            zip -r "../decode_${NIGHTLY_TAG}_windows_arm64.zip" .
+          )
+          rm -rf ./artifacts/release/windows-x86_64 ./artifacts/release/windows-arm64
+
+          MACOS_X86_PATH="$(find ./artifacts/decode/macos-x86_64 -maxdepth 3 -type f -name '*.dmg' | head -n 1)"
+          MACOS_ARM_PATH="$(find ./artifacts/decode/macos-arm64 -maxdepth 3 -type f -name '*.dmg' | head -n 1)"
+          if [ -z "${MACOS_X86_PATH}" ] || [ -z "${MACOS_ARM_PATH}" ]; then
+            echo "Failed to locate one or more macOS DMG artifacts."
+            exit 1
+          fi
+          cp "${MACOS_X86_PATH}" "./artifacts/release/decode_${NIGHTLY_TAG}_macos_x86_64.dmg"
+          cp "${MACOS_ARM_PATH}" "./artifacts/release/decode_${NIGHTLY_TAG}_macos_arm64.dmg"
+
+      - name: Download latest tbc-tools release assets (best-effort)
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p ./artifacts/tbc-tools
+          TBC_TOOLS_TAG="$(gh api "repos/${TBC_TOOLS_REPO}/releases/latest" --jq '.tag_name' 2>/dev/null || true)"
+          if [ -z "${TBC_TOOLS_TAG}" ]; then
+            echo "Unable to resolve latest tbc-tools release tag; continuing without tbc-tools assets."
+            exit 0
+          fi
+          echo "Using tbc-tools release: ${TBC_TOOLS_TAG}"
+          if ! gh release download "${TBC_TOOLS_TAG}" \
+              --repo "${TBC_TOOLS_REPO}" \
+              --dir "./artifacts/tbc-tools"; then
+            echo "Failed to download tbc-tools assets; continuing without them."
+          fi
+
+      - name: Stage tbc-tools assets for upload (best-effort)
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! compgen -G "./artifacts/tbc-tools/*" > /dev/null; then
+            echo "No tbc-tools assets to stage; skipping."
+            exit 0
+          fi
+          cp ./artifacts/tbc-tools/* ./artifacts/release/
+
+      - name: Replace today's existing nightly release if present
+        shell: bash
+        run: |
+          set -uo pipefail
+          REPO="${{ github.repository }}"
+          if gh release view "${NIGHTLY_TAG}" --repo "${REPO}" >/dev/null 2>&1; then
+            echo "Nightly release ${NIGHTLY_TAG} already exists; replacing it with the latest build."
+            gh release delete "${NIGHTLY_TAG}" --repo "${REPO}" --yes --cleanup-tag
+          else
+            echo "No existing nightly release for ${NIGHTLY_TAG}; creating fresh."
+          fi
+          # Remove any stray tag without a release so the create step can tag cleanly.
+          if git ls-remote --exit-code --tags "https://github.com/${REPO}.git" "refs/tags/${NIGHTLY_TAG}" >/dev/null 2>&1; then
+            echo "Removing stray tag ${NIGHTLY_TAG}."
+            gh api -X DELETE "repos/${REPO}/git/refs/tags/${NIGHTLY_TAG}" >/dev/null 2>&1 || true
+          fi
+
+      - name: Create pre-production nightly release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "${NIGHTLY_TAG}" \
+            --repo "${{ github.repository }}" \
+            --target "${BUILD_REF}" \
+            --title "${RELEASE_TITLE}" \
+            --prerelease \
+            --generate-notes
+
+      - name: Prepend pre-production banner to release notes (best-effort)
+        shell: bash
+        run: |
+          set -uo pipefail
+          REPO="${{ github.repository }}"
+          GENERATION_TIME="$(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+          if {
+            printf '⚠️ **Pre-production nightly build — not a stable release.**\n\n'
+            printf 'This automated build is produced from merged pull requests on the `%s` branch and is intended for testing only. It may be unstable or incomplete.\n\n' "${DEFAULT_BRANCH}"
+            printf -- '- **Built from:** `%s`\n' "${BUILD_REF}"
+            printf -- '- **Generated:** %s\n' "${GENERATION_TIME}"
+            printf -- '- **Tag:** `%s`\n\n---\n\n' "${NIGHTLY_TAG}"
+            gh release view "${NIGHTLY_TAG}" --repo "${REPO}" --json body --jq '.body'
+          } > ./nightly_body.md 2>/dev/null && gh release edit "${NIGHTLY_TAG}" --repo "${REPO}" --notes-file ./nightly_body.md; then
+            echo "Pre-production banner prepended to release notes."
+          else
+            echo "Could not prepend banner; release remains with auto-generated notes."
+          fi
+
+      - name: Upload nightly release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "${NIGHTLY_TAG}" ./artifacts/release/* --repo "${{ github.repository }}" --clobber
