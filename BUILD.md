@@ -41,7 +41,7 @@ Also Requires FlaLDF [Download & Install via .deb for Linux](https://github.com/
 
 ### NOTES!!
 
-HiFi-Decode preview function - the python library sounddevice requires portaudio (libportaudio2 on Ubuntu). This is not included in the self-contained binaries and has to be installed locally if not already installed. (Included with most desktop environments.)
+HiFi-Decode preview function - the python library sounddevice requires PortAudio. Current self-contained release builds bundle this dependency; source installs still require `libportaudio2` (or equivalent) from your package manager.
 
 
 ## Build and install VHS-Decode system-wide using pipx
