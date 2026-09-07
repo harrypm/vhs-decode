@@ -81,6 +81,76 @@ def parse_flac_streaminfo(file_path):
     except OSError:
         return None
 
+def parse_flac_vorbis_comments(file_path):
+    """Parse FLAC Vorbis comments and return an upper-cased key/value map."""
+    try:
+        with open(file_path, "rb") as f:
+            if f.read(4) != b"fLaC":
+                return {}
+
+            comments = {}
+            while True:
+                header = f.read(4)
+                if len(header) != 4:
+                    return comments
+
+                is_last = bool(header[0] & 0x80)
+                block_type = header[0] & 0x7F
+                length = int.from_bytes(header[1:4], "big")
+
+                if block_type == 4:
+                    data = f.read(length)
+                    if len(data) != length:
+                        return comments
+                    comments.update(_parse_vorbis_comment_block(data))
+                else:
+                    f.seek(length, io.SEEK_CUR)
+
+                if is_last:
+                    return comments
+    except OSError:
+        return {}
+
+
+def _parse_vorbis_comment_block(data: bytes) -> dict[str, str]:
+    comments = {}
+    pos = 0
+
+    if len(data) < 8:
+        return comments
+
+    vendor_len = int.from_bytes(data[pos : pos + 4], "little")
+    pos += 4
+    pos += vendor_len
+    if pos + 4 > len(data):
+        return comments
+
+    user_comment_count = int.from_bytes(data[pos : pos + 4], "little")
+    pos += 4
+
+    for _ in range(user_comment_count):
+        if pos + 4 > len(data):
+            break
+        comment_len = int.from_bytes(data[pos : pos + 4], "little")
+        pos += 4
+        if pos + comment_len > len(data):
+            break
+        raw_comment = data[pos : pos + comment_len]
+        pos += comment_len
+
+        try:
+            decoded_comment = raw_comment.decode("utf-8", errors="replace")
+        except Exception:
+            continue
+
+        if "=" not in decoded_comment:
+            continue
+
+        key, value = decoded_comment.split("=", 1)
+        comments[key.upper()] = value
+
+    return comments
+
 
 class NUMA:
     # Memory binding is performed via libnuma's numa_tonode_memory wrapper,

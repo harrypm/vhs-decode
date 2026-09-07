@@ -35,7 +35,9 @@ from vhsdecode.hifi.utils import (
     PostProcessorSharedMemory,
     PeakGain,
     REAL_DTYPE,
-    cleanup_process
+    cleanup_process,
+    parse_flac_streaminfo,
+    parse_flac_vorbis_comments,
 )
 from vhsdecode.hifi.format_scaling import (
     get_normalizer
@@ -262,6 +264,71 @@ def parse_frequency(string):
             break
     return (multiplier * float(string)) / 1.0e6
 
+
+COMMON_AUDIO_SAMPLE_RATES = {
+    8000,
+    11025,
+    12000,
+    16000,
+    22050,
+    24000,
+    32000,
+    44100,
+    48000,
+    88200,
+    96000,
+    176400,
+    192000,
+}
+
+
+def infer_flac_input_frequency_mhz(path: str):
+    comments = parse_flac_vorbis_comments(path)
+    rf_sample_rate = comments.get("RF_SAMPLE_RATE")
+    if rf_sample_rate is not None:
+        try:
+            rf_hz = float(rf_sample_rate)
+            if rf_hz > 0:
+                return rf_hz / 1.0e6, "RF_SAMPLE_RATE metadata tag"
+        except ValueError:
+            pass
+
+    streaminfo = parse_flac_streaminfo(path)
+    if streaminfo is None:
+        return None, None
+
+    sample_rate = int(streaminfo.get("sample_rate", 0))
+    if sample_rate <= 0:
+        return None, None
+
+    if sample_rate in COMMON_AUDIO_SAMPLE_RATES:
+        return None, None
+
+    # RF FLAC captures store RF rate as kHz in STREAMINFO because FLAC
+    # sample_rate cannot represent MHz-range RF sample rates directly.
+    if sample_rate <= 655350:
+        return sample_rate / 1.0e3, "FLAC STREAMINFO sample_rate"
+
+    return sample_rate / 1.0e6, "FLAC STREAMINFO sample_rate"
+
+
+def resolve_input_frequency_mhz(path: str, cli_inputfreq):
+    if cli_inputfreq is not None:
+        return cli_inputfreq
+
+    if path and path != "-" and path.lower().endswith(".flac"):
+        inferred_mhz, source = infer_flac_input_frequency_mhz(path)
+        if inferred_mhz is not None:
+            print(
+                f"Using RF input frequency {inferred_mhz:g} MHz inferred from {source}."
+            )
+            return inferred_mhz
+        print(
+            "WARN: Could not infer RF input frequency from FLAC metadata; defaulting to 40 MHz."
+        )
+
+    return 40.0
+
 try:
     try:
         from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -323,8 +390,12 @@ parser.add_argument(
     dest="inputfreq",
     metavar='',
     type=parse_frequency,
-    default=40,
-    help="RF sampling frequency in source file (default is 40MHz)",
+    default=None,
+    help=(
+        "RF sampling frequency in source file. "
+        "If omitted for FLAC input, metadata is used when available; "
+        "otherwise defaults to 40MHz."
+    ),
 )
 parser.add_argument(
     "--overwrite",
@@ -943,6 +1014,11 @@ class AsyncSoundFileReader(sf.SoundFile):
 
         self._dtype_normalizer, self._numpy_in_dtype = get_normalizer(input_dtype)
         self._input_dtype_size = np.dtype(self._numpy_in_dtype).itemsize
+        self._soundfile_dtype = "int16"
+        self._uses_int16_proxy = self._numpy_in_dtype in (np.int8, np.uint8)
+        self._int16_normalizer = None
+        if self._uses_int16_proxy:
+            self._int16_normalizer, _ = get_normalizer(np.int16)
 
     def __enter__(self):
         super().__enter__()
@@ -977,11 +1053,26 @@ class AsyncSoundFileReader(sf.SoundFile):
         return self._buffer_read_into(out)
 
     def _buffer_read_into(self, out):
+        if self._uses_int16_proxy:
+            src = out.view(np.int16)
+            bytes_to_read = len(out) * np.dtype(np.int16).itemsize
+            values_read = super().buffer_read_into(
+                memoryview(src).cast("B")[:bytes_to_read],
+                dtype=self._soundfile_dtype,
+            )
+
+            if self._int16_normalizer is not None:
+                self._int16_normalizer(src, out, values_read)
+
+            return values_read
         # reinterpret the float32 output buffer as the source dtype
         src = out.view(self._numpy_in_dtype)
 
         bytes_to_read = len(out) * self._input_dtype_size
-        values_read = super().buffer_read_into(memoryview(src).cast("B")[:bytes_to_read], dtype="int16")
+        values_read = super().buffer_read_into(
+            memoryview(src).cast("B")[:bytes_to_read],
+            dtype=self._soundfile_dtype,
+        )
 
         if self._dtype_normalizer is not None:
             self._dtype_normalizer(src, out, values_read)
@@ -995,10 +1086,13 @@ def as_soundfile(pathR, input_format_override: np.dtype = None):
 
     input_format = FORMAT_TO_DTYPE.get(extension_with_endian)
     is_raw = input_format is not None
+    streaminfo = None
 
     # TODO add user facing parameter
     if input_format_override is not None:
         input_format = input_format_override
+    if extension == "flac":
+        streaminfo = parse_flac_streaminfo(pathR)
 
     if is_raw or pathR == "-":
         if pathR == "-" and input_format == None:
@@ -1009,17 +1103,61 @@ def as_soundfile(pathR, input_format_override: np.dtype = None):
             input_format
         )
     elif "flac" == extension:
+        flac_input_format = input_format
+        if flac_input_format is None and streaminfo is not None:
+            bps = streaminfo.get("bits_per_sample")
+            inferred_map = {
+                8: FORMAT_S8,
+                10: FORMAT_S10_LE,
+                12: FORMAT_S12_LE,
+                16: FORMAT_S16_LE,
+            }
+            flac_input_format = inferred_map.get(bps)
+
+        # Large RF captures can exceed FLAC STREAMINFO total_samples capacity.
+        # In such files, metadata may wrap/truncate and libsndfile stops early.
+        # Detect implausible metadata-vs-file-size and use stream decoders that
+        # read until EOF.
+        if streaminfo is not None and streaminfo.get("total_samples", 0):
+            try:
+                channels = max(1, int(streaminfo.get("channels", 1)))
+                bits_per_sample = max(1, int(streaminfo.get("bits_per_sample", 16)))
+                bytes_per_sample = max(1, (bits_per_sample + 7) // 8)
+                expected_raw_bytes = int(streaminfo["total_samples"]) * channels * bytes_per_sample
+                actual_size = os.path.getsize(pathR)
+                if expected_raw_bytes > 0 and actual_size > (expected_raw_bytes * 8):
+                    print(
+                        "WARN: FLAC STREAMINFO length appears truncated; using external decoder for full-length read."
+                    )
+                    try:
+                        if test_if_flac_is_installed():
+                            return AsyncReader(
+                                FlacFileReader(pathR),
+                                flac_input_format,
+                            )
+                    except Exception:
+                        pass
+                    if test_if_ffmpeg_is_installed():
+                        print(
+                            "WARN: Using ffmpeg FLAC reader fallback; forcing input format to s16le."
+                        )
+                        return AsyncReader(
+                            FFMpegFileReader(pathR),
+                            np.int16,
+                        )
+            except (OSError, ValueError, TypeError):
+                pass
         try:
             return AsyncSoundFileReader(
                 pathR,
-                input_format
+                flac_input_format
             )
         except sf.LibsndfileError as e:
             print(f"WARN: libsndfile could not open this FLAC file: {e}")
             if test_if_ffmpeg_is_installed():
                 return AsyncReader(
                     FFMpegFileReader(pathR),
-                    input_format
+                    np.int16
                 )
             else:
                 print(
@@ -1893,11 +2031,11 @@ def run_decoder(args, decode_options, ui_t: Optional[AppWindow] = None):
 
 def build_decode_options_from_args(args):
     system = "PAL" if args.pal else "NTSC"
-    sample_freq = args.inputfreq
-    input_format_override = args.raw_format
 
     filename = args.infile
     outname = args.outfile
+    sample_freq = resolve_input_frequency_mhz(filename, args.inputfreq)
+    input_format_override = args.raw_format
 
     # 8mm AFM uses a mono channel, or L-R/L+R rather than L/R channels
     # The spec defines a dual audio mode but not sure if it was ever used.
