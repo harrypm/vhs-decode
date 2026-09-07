@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from vhsdecode.hifi.utils import parse_flac_streaminfo
+from vhsdecode.hifi.utils import parse_flac_streaminfo, parse_flac_vorbis_comments
 from vhsdecode.drop_paths import extract_dropped_file_paths
 
 try:
@@ -1768,6 +1768,21 @@ class FileIODialogUI(HifiUi):
         """
         if not input_path.lower().endswith(".flac"):
             return
+
+        comments = parse_flac_vorbis_comments(input_path)
+        rf_sample_rate = comments.get("RF_SAMPLE_RATE")
+        if rf_sample_rate is not None:
+            try:
+                rf_hz = float(rf_sample_rate)
+                if rf_hz > 0:
+                    mhz = rf_hz / 1.0e6
+                    self.set_input_sample_rate_mhz(mhz)
+                    print(
+                        f"Input sample rate auto set to {mhz:g} MHz from RF_SAMPLE_RATE metadata tag"
+                    )
+                    return
+            except ValueError:
+                pass
         streaminfo = parse_flac_streaminfo(input_path)
         if streaminfo is None or streaminfo["sample_rate"] <= 0:
             return

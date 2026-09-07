@@ -117,3 +117,28 @@ def test_hifi_decode_runs_without_crashing(tmp_path, data_dir):
     assert data.size > 0, "decoded buffer is empty"
     peak = float(np.max(np.abs(data)))
     assert peak > 0.0, "decoded audio is silent (peak amplitude 0)"
+
+
+def test_hifi_decode_infers_frequency_from_flac_metadata(tmp_path, data_dir):
+    fixture = _resolve_fixture(data_dir)
+    if fixture is None:
+        pytest.skip(
+            f"HiFi smoke fixture not present in {_FIXTURE_DIR} or {data_dir}"
+        )
+
+    from vhsdecode.hifi import main as hifi_main
+
+    out_file = tmp_path / "hifi_auto_freq.flac"
+    args = hifi_main.parser.parse_args(
+        [
+            "--pal",
+            "--overwrite",
+            str(fixture),
+            str(out_file),
+        ]
+    )
+    decode_options, _ = hifi_main.build_decode_options_from_args(args)
+
+    assert decode_options["input_rate"] == pytest.approx(
+        10_000_000.0, abs=1.0
+    ), decode_options["input_rate"]
