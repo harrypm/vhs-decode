@@ -14,6 +14,8 @@ This version has been modified to work with the differences found in [FM RF sign
 
 <img src="assets/images/decode-launcher-Rev2.0-windows-2026.png" width="600" height="">
 
+> You can also build from source via the [BUILD.MD](https://github.com/oyvindln/vhs-decode/blob/vhs_decode/BUILD.md) 
+
 
 > [!CAUTION]
 > FM RF Archival captures and capturing is not to be confused with the TV Modulator/Demodulator pack's signals, i.e the **"antenna connectors"** on the back of a VCR!
@@ -261,18 +263,16 @@ While type and voltage does not matter drastically it's best to use new/tested c
 - Some Umatic decks have an RF output on the back, *however* this only provides Luma RF for dropout detection and not the full Y/C FM signal required for a full RF capture.
 
 
-# Dependencies & Installation - Software
+# Usage
 
 
-VHS-Decode, has been developed and tested on machines running the latest versions of Ubuntu, Debian, Linux Mint & Windows 10, MacOS 15 x86 & Arm.
+The tbc-tools suite, and combined EXE version of `ld-decode` / `vhs-decode` / `cvbs-decode` / `hifi-decode` which is simply a single `decode` binary exists for Windows, Linux and MacOS and is entirely self-contained or "portable" binarys meaning they will work without hard system wide installation allowing you to use new or old versions from local or published archives easily. 
 
-The tools should however be able to be built on other distributions too, provided they have access to somewhat recent versions of the needed dependencies, including at least Python 3.11.
 
-There is a [Linux compatibility doc](https://docs.google.com/document/d/132ycIMMNvdKvrNZSzbckXVEPQVLTnH_YX0Oh3lqtkkQ) for various tested distributions of Linux.
+## Install tbc-tools
 
-Other dependencies include Python 3.11+, NumPy, SciPy, Cython, Numba, Pandas, Qt5, Qwt, Cmake, and FFmpeg.
 
-</details>
+You can [install manually](https://github.com/harrypm/tbc-tools#linux-dependencies-and-installation-multi-distro) or use the self-contained binary packages [found here](https://github.com/harrypm/tbc-tools/releases/).
 
 
 <details closed>
@@ -281,7 +281,8 @@ Other dependencies include Python 3.11+, NumPy, SciPy, Cython, Numba, Pandas, Qt
 
 [Windows Setup & Usage Docs](https://github.com/oyvindln/vhs-decode/wiki/Windows-Build)
 
-The tbc-tools suite, and combined EXE version of `ld-decode` / `vhs-decode` / `cvbs-decode` / `hifi-decode` which is simply `decode.exe` exists for Windows, Linux and MacOS and is entirely self-contained or "portable" binarys meaning they will work without hard system wide installation allowing you to use new or old versions from local or published archives easily. 
+
+For Windows users you have a single decode.exe and with tbc-tools having discreate tooling binarys which launches decode launcher and analyse respectivly for GUI's, and can call all tools via direct CLI or via GUI by just running the .exe's directly, this services the workflow end to end, as for capture hardware [MISRC GUI](https://github.com/harrypm/MISRC-GUI) unifyes capture so you only have 3 core binarys for your entire capture to export workflow ready for post processing.
 
 
 </details>
@@ -293,7 +294,7 @@ The tbc-tools suite, and combined EXE version of `ld-decode` / `vhs-decode` / `c
 
 [MacOS Setup & Usage Docs](https://github.com/oyvindln/vhs-decode/wiki/MacOS-Build)
 
-For MacOS users vhs-decode.app and tbc-tools.app which launches decode launcher and analyse respectivly, and can call all tools via direct CLI, this services the workflow end to end, as for capture hardware the MISRC and DdD are both GUI platforms so you have 3 `.apps` for your entire workflow for most capture to end decoded file ready for post processing.
+For MacOS users decode.app and tbc-tools.app which launches decode launcher and analyse respectivly for GUI's, and can call all tools via direct CLI, this services the workflow end to end, as for capture hardware [MISRC GUI](https://github.com/harrypm/MISRC-GUI) unifyes capture so you only have 3 `.apps` binarys for your entire capture to export workflow ready for post processing.
 
 Please note you will have to manually approve the apps to run one time, and every time for capture tools as MacOS is highly restrictive with 3rd party hardware and software tools.
 
@@ -306,21 +307,20 @@ Please note you will have to manually approve the apps to run one time, and ever
     
 [Linux Setup & Usage Docs](https://github.com/oyvindln/vhs-decode/wiki/Linux-Build)
 
-Decoders & tools have a self-contained binary appimage package for use on most distributions, this is the prefured way of using vhs-decode for end users and support, with direct building being more focused on development and testing. 
+For Linux users decode.AppImage and tbc-tools.AppImage which launches decode launcher and analyse respectivly for GUI's, and can call all tools via direct CLI, this services the workflow end to end, as for capture hardware [MISRC GUI](https://github.com/harrypm/MISRC-GUI) unifyes capture so you only have 3 `.AppImage` binarys for your entire capture to export workflow ready for post processing.
 
-You can also build from source via the [BUILD.MD](https://github.com/oyvindln/vhs-decode/blob/vhs_decode/BUILD.md) 
+Self-contained binary appimage packages for use on most distributions, this is the preferred way of using decode for end users and support, with direct building being more focused on development and testing. 
 
+</details>
 
-# Usage
-
-
-Note with WSL2 & Ubuntu, `./` in front of applications and scripts may be needed to run them or to run scripts within the folder.
+> [!NOTE]  
+> With WSL2 & Ubuntu, `./` in front of applications and scripts may be needed to run them or to run scripts within the folder.
 
 
 ### Decode Launcher GUI
 
 
-Run via opning the the app/.exe/.appimage binary builds directly.  
+Run via opening the the app/.exe/.appimage binary builds directly.  
 
 For a basic click-to-open launcher that lets you select common tools and open them in a terminal (or start native GUI tools), use:
 
@@ -337,6 +337,7 @@ Current native GUI launch targets include:
 - `hifi-decode --gui`
 - `filter-tune`
 
+
 ## CLI 
 
 
@@ -345,39 +346,6 @@ Use `cd vhs-decode` to enter into the directory to run commands, `cd ..` to go b
 Use <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop the current process.
 
 You don't actually type `<` and `>` on your input & output files.
-
-
-</details>
-
-
-<details closed>
-<summary>Build from Source Windows</summary>
-<br>
-
-1. Install Python 3.13
-   * Download the [python installer](https://www.python.org/downloads/)
-   * **Make sure to check the box requesting Python be added to the PATH**
-1. Install Visual Studio Build Tools for 
-   * Download the [Visual Studio Installer](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-   * In the installer, select `Visual Studio Build Tools 2022`
-     * If there are multiple versions, select the latest year
-   * Click on the `Desktop Development with C++` and a list of default components will be selected
-   * Click `Install` to install them
-1. Install Rust
-   * Download the [Rust installer](https://www.rust-lang.org/tools/install) follow the wizard to install Rust
-1. Build vhs-decode
-   * Clone the repo if you have not already done so
-   * `cd C:\path\to\vhs-decode`
-   * `pip install .[hifi_gui_qt6]`
-1. Now you will be able to run the decode suite from the source code.
-   * Example `python C:\path\to\vhs-decode\decode.py hifi --gui`
-
-</details>
-
-## Install tbc-tools
-
-You can [install manually](https://github.com/harrypm/tbc-tools#linux-dependencies-and-installation-multi-distro) or use the self-contained binary packages [found here](https://github.com/harrypm/tbc-tools/releases/).
-
 
 
 # FM RF Capture 
